@@ -1,0 +1,17 @@
+languages: [typescript, python]
+linter: eslint
+test_runner: vitest
+package_manager: pnpm
+
+conventions:
+  - "Always use explicit return types on public functions."
+  - "Never downgrade dependency versions."
+  - "Do not modify lock files manually."
+
+auto_fix: [lint, format, simple_types, config_ci]
+escalate: [logic_errors, breaking_changes, dependency_conflicts]
+
+max_attempts: 3
+
+notify:
+  slack_channel: "#dev-alerts"

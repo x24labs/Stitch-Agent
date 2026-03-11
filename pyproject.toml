@@ -1,0 +1,72 @@
+[project]
+name = "stitch-agent"
+version = "0.1.0"
+description = "The AI that stitches your CI back together"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+authors = [{ name = "stitch contributors" }]
+keywords = ["ci", "ai", "gitlab", "github", "automation", "devops"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    "anthropic>=0.40.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "gitpython>=3.1",
+]
+
+[project.optional-dependencies]
+gitlab = ["python-gitlab>=4.0"]
+github = ["pygithub>=2.0"]
+webhook = ["fastapi>=0.115", "uvicorn>=0.30"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "ruff>=0.8",
+    "pyright>=1.1",
+    "respx>=0.22",
+]
+publish = ["build>=1.0", "twine>=5.0"]
+all = ["stitch-agent[gitlab,github,webhook,dev]"]
+
+[project.scripts]
+stitch = "runners.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["stitch_agent", "runners"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["stitch_agent"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+include = ["stitch_agent", "runners", "tests"]
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
