@@ -216,7 +216,7 @@ class StitchAgent:
 
             with contextlib.suppress(Exception):
                 await self.escalation_callback(request, result)
-        if config.notify:
+        if config.notify.has_destinations():
             from stitch_agent.core.notifier import Notifier
 
             notifier = Notifier(config)

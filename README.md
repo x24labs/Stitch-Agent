@@ -104,8 +104,20 @@ escalate:
   - logic_errors
   - breaking_changes
 notify:
-  slack_webhook: https://hooks.slack.com/...
+  channels:
+    - type: slack
+      webhook_url: https://hooks.slack.com/...
+    - type: webhook
+      url: https://hooks.example.com/stitch
 max_attempts: 3
+```
+
+Legacy format is still supported:
+
+```yaml
+notify:
+  slack: https://hooks.slack.com/...
+  webhook: https://hooks.example.com/stitch
 ```
 
 ## GitHub support

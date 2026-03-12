@@ -14,4 +14,8 @@ escalate: [logic_errors, breaking_changes, dependency_conflicts]
 max_attempts: 3
 
 notify:
-  slack_channel: "#dev-alerts"
+  channels:
+    - type: slack
+      webhook_url: "https://hooks.slack.com/services/xxx/yyy/zzz"
+    - type: webhook
+      url: "https://hooks.example.com/stitch"

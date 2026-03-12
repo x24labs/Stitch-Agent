@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ErrorType(StrEnum):
@@ -76,6 +76,31 @@ class FixResult(BaseModel):
     escalation_reason_code: str | None = None
 
 
+class NotifyChannelConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+    id: str | None = None
+    url: str | None = None
+    webhook_url: str | None = None
+
+
+class NotifyConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    timeout_seconds: float = Field(default=10.0, gt=0.0, le=60.0)
+    fanout: Literal["parallel", "sequential"] = "parallel"
+    channels: list[NotifyChannelConfig] | None = None
+    webhook: str | None = None
+    slack: str | None = None
+    slack_webhook: str | None = None
+
+    def has_destinations(self) -> bool:
+        if self.channels is not None:
+            return len(self.channels) > 0
+        return any((self.webhook, self.slack, self.slack_webhook))
+
+
 class StitchConfig(BaseModel):
     languages: list[str] = Field(default_factory=list)
     linter: str | None = None
@@ -93,6 +118,6 @@ class StitchConfig(BaseModel):
         ]
     )
     escalate: list[str] = Field(default_factory=lambda: ["logic_errors", "breaking_changes"])
-    notify: dict[str, str] = Field(default_factory=dict)
+    notify: NotifyConfig = Field(default_factory=NotifyConfig)
     max_attempts: int = Field(default=3, ge=1, le=10)
     docker_image: str | None = None
