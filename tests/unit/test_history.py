@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from stitch_agent.history import HistoryStore, PatternSummary, default_db_path
+from stitch_agent.history import HistoryStore, default_db_path
 from stitch_agent.models import ErrorType, FixRequest, FixResult
 
 
