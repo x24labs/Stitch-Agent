@@ -4,11 +4,44 @@ import argparse
 import asyncio
 import json
 import sys
+from pathlib import Path
 
 from stitch_agent.adapters.gitlab import GitLabAdapter
 from stitch_agent.core.agent import StitchAgent
 from stitch_agent.models import FixRequest
+from stitch_agent.onboarding.connect import run_connect
+from stitch_agent.onboarding.doctor import run_doctor_checks
+from stitch_agent.onboarding.report import CommandReport
+from stitch_agent.onboarding.setup import run_setup
 from stitch_agent.settings import StitchSettings
+
+_SUBCOMMANDS = {"fix", "setup", "doctor", "connect"}
+
+
+def _add_fix_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--platform", choices=["gitlab", "github"], default="gitlab")
+    parser.add_argument(
+        "--project-id", required=True, help="GitLab: project ID or path. GitHub: owner/repo"
+    )
+    parser.add_argument("--pipeline-id", required=True)
+    parser.add_argument("--job-id", required=True)
+    parser.add_argument("--branch", required=True)
+    parser.add_argument("--job-name", default=None)
+    parser.add_argument("--gitlab-url", default=None, help="Override GitLab base URL")
+    parser.add_argument("--github-url", default=None, help="Override GitHub API base URL")
+    parser.add_argument(
+        "--haiku-threshold",
+        type=float,
+        default=None,
+        help="Confidence threshold for haiku types (default 0.80)",
+    )
+    parser.add_argument(
+        "--sonnet-threshold",
+        type=float,
+        default=None,
+        help="Confidence threshold for sonnet types (default 0.40)",
+    )
+    parser.add_argument("--output", choices=["json", "text"], default="text")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -16,33 +49,65 @@ def build_parser() -> argparse.ArgumentParser:
         prog="stitch",
         description="The AI that stitches your CI back together",
     )
-    p.add_argument("--platform", choices=["gitlab", "github"], default="gitlab")
-    p.add_argument(
-        "--project-id", required=True, help="GitLab: project ID or path. GitHub: owner/repo"
+
+    subparsers = p.add_subparsers(dest="command")
+
+    fix_parser = subparsers.add_parser("fix", help="Analyze and fix a failed CI job")
+    _add_fix_arguments(fix_parser)
+
+    setup_parser = subparsers.add_parser("setup", help="Bootstrap stitch configuration")
+    setup_parser.add_argument("--repo", default=".", help="Repository root path")
+    setup_parser.add_argument("--platform", choices=["gitlab", "github"], default="gitlab")
+    setup_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
+
+    connect_parser = subparsers.add_parser("connect", help="Connect stitch with CI provider")
+    connect_parser.add_argument("--repo", default=".", help="Repository root path")
+    connect_parser.add_argument("--platform", choices=["gitlab", "github"], default="gitlab")
+    connect_parser.add_argument(
+        "--project-id", default=None, help="GitHub repository in owner/repo format"
     )
-    p.add_argument("--pipeline-id", required=True)
-    p.add_argument("--job-id", required=True)
-    p.add_argument("--branch", required=True)
-    p.add_argument("--job-name", default=None)
-    p.add_argument("--gitlab-url", default=None, help="Override GitLab base URL")
-    p.add_argument("--github-url", default=None, help="Override GitHub API base URL")
-    p.add_argument(
-        "--haiku-threshold",
-        type=float,
+    connect_parser.add_argument(
+        "--webhook-url",
         default=None,
-        help="Confidence threshold for haiku types (default 0.80)",
+        help="Public stitch webhook endpoint, for example https://example.com/webhook/github",
     )
-    p.add_argument(
-        "--sonnet-threshold",
-        type=float,
-        default=None,
-        help="Confidence threshold for sonnet types (default 0.40)",
+    connect_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
+
+    doctor_parser = subparsers.add_parser("doctor", help="Run onboarding diagnostics")
+    doctor_parser.add_argument("--repo", default=".", help="Repository root path")
+    doctor_parser.add_argument("--platform", choices=["gitlab", "github"], default="gitlab")
+    doctor_parser.add_argument(
+        "--project-id", default=None, help="Provider project id for permission checks"
     )
-    p.add_argument("--output", choices=["json", "text"], default="text")
+    doctor_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
+
     return p
 
 
+def parse_cli_args(
+    parser: argparse.ArgumentParser, argv: list[str] | None = None
+) -> argparse.Namespace:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if raw and raw[0] not in _SUBCOMMANDS and raw[0] not in {"-h", "--help"}:
+        raw = ["fix", *raw]
+    return parser.parse_args(raw)
+
+
 async def run(args: argparse.Namespace) -> int:
+    if args.command == "doctor":
+        return await run_doctor(args)
+    if args.command == "setup":
+        return await run_setup_command(args)
+    if args.command == "connect":
+        return await run_connect_command(args)
+    if args.command not in {None, "fix"}:
+        print(f"Unknown command: {args.command}", file=sys.stderr)
+        return 1
+
+    return await run_fix(args)
+
+
+async def run_fix(args: argparse.Namespace) -> int:
     settings = StitchSettings()
     request = FixRequest(
         platform=args.platform,
@@ -109,9 +174,81 @@ async def run(args: argparse.Namespace) -> int:
     return 0 if result.status == "fixed" else 1
 
 
-def main() -> None:
+async def run_doctor(args: argparse.Namespace) -> int:
+    settings = StitchSettings()
+    report = await run_doctor_checks(
+        platform=args.platform,
+        repo_root=Path(args.repo),
+        settings=settings,
+        project_id=args.project_id,
+    )
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        _print_doctor_report(report)
+    return report.exit_code()
+
+
+def _run_not_implemented(command: str, *, json_output: bool) -> int:
+    report = CommandReport(
+        command=command,
+        ok=False,
+        prompts=[f"{command} command is not implemented yet"],
+        warnings=[f"{command} is in progress"],
+        next_steps=["Run `stitch doctor --json` to verify current readiness"],
+    )
+    if json_output:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        print(f"{command} is not implemented yet")
+        print("Run `stitch doctor --json` to verify current readiness")
+    return report.exit_code()
+
+
+async def run_setup_command(args: argparse.Namespace) -> int:
+    report = run_setup(repo_root=Path(args.repo), platform=args.platform)
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        _print_doctor_report(report)
+    return report.exit_code()
+
+
+async def run_connect_command(args: argparse.Namespace) -> int:
+    settings = StitchSettings()
+    report = await run_connect(
+        platform=args.platform,
+        repo_root=Path(args.repo),
+        project_id=args.project_id,
+        webhook_url=args.webhook_url,
+        settings=settings,
+    )
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        _print_doctor_report(report)
+    return report.exit_code()
+
+
+def _print_doctor_report(report: CommandReport) -> None:
+    status = "ok" if report.ok else "failed"
+    print(f"stitch doctor: {status}")
+    for check in report.checks:
+        print(f"- [{check.status}] {check.id}: {check.message}")
+        if check.remediation:
+            print(f"  remediation: {check.remediation}")
+    if report.next_steps:
+        print("next steps:")
+        for step in report.next_steps:
+            print(f"- {step}")
+
+
+def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
-    args = parser.parse_args()
+    args = parse_cli_args(parser, argv=argv)
+    if args.command is None:
+        parser.print_help()
+        sys.exit(1)
     sys.exit(asyncio.run(run(args)))
 
 
