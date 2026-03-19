@@ -14,6 +14,7 @@ class ErrorType(StrEnum):
     COMPLEX_TYPE = "complex_type"
     TEST_CONTRACT = "test_contract"
     LOGIC_ERROR = "logic_error"
+    BUILD = "build"
     UNKNOWN = "unknown"
 
 
@@ -23,6 +24,7 @@ HAIKU_TYPES: frozenset[ErrorType] = frozenset(
         ErrorType.FORMAT,
         ErrorType.SIMPLE_TYPE,
         ErrorType.CONFIG_CI,
+        ErrorType.BUILD,
     }
 )
 
@@ -113,6 +115,7 @@ class StitchConfig(BaseModel):
             "format",
             "simple_type",
             "config_ci",
+            "build",
             "complex_type",
             "test_contract",
         ]

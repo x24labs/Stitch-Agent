@@ -111,3 +111,64 @@ async def test_confidence_is_between_0_and_1(clf: Classifier) -> None:
     log = "src/main.py:1:1: E501 line too long\n"
     result = await clf.classify(log)
     assert 0.0 <= result.confidence <= 1.0
+
+
+async def test_build_command_not_found(clf: Classifier) -> None:
+    log = "$ curl --version\n/bin/sh: curl: not found\nERROR: Job failed: exit code 1\n"
+    result = await clf.classify(log)
+    assert result.error_type == ErrorType.BUILD
+    assert result.confidence > 0.7
+
+
+async def test_build_apt_get_not_found(clf: Classifier) -> None:
+    log = (
+        "$ apt-get install -y curl\n"
+        "apt-get: not found\n"
+        "$ apk add curl\n"
+        "returned a non-zero exit code: 1\n"
+    )
+    result = await clf.classify(log)
+    assert result.error_type == ErrorType.BUILD
+    assert result.confidence > 0.7
+
+
+async def test_build_apk_error(clf: Classifier) -> None:
+    log = (
+        "$ apk add --no-cache curl\n"
+        "ERROR: apk add: error opening /var/cache/apk: No such file or directory\n"
+        "exit code 1\n"
+    )
+    result = await clf.classify(log)
+    assert result.error_type == ErrorType.BUILD
+    assert result.confidence > 0.7
+
+
+async def test_build_curl_network_failure(clf: Classifier) -> None:
+    log = (
+        "$ curl -fsSL https://example.com/install.sh | bash\n"
+        "curl: (6) Could not resolve host: example.com\n"
+        "ERROR: Job failed\n"
+    )
+    result = await clf.classify(log)
+    assert result.error_type == ErrorType.BUILD
+    assert result.confidence > 0.7
+
+
+async def test_build_docker_copy_failed(clf: Classifier) -> None:
+    log = (
+        "Step 5/10 : COPY requirements.txt /app/\n"
+        "COPY failed: file not found in build context: requirements.txt\n"
+    )
+    result = await clf.classify(log)
+    assert result.error_type == ErrorType.BUILD
+    assert result.confidence > 0.7
+
+
+async def test_build_does_not_match_python_traceback(clf: Classifier) -> None:
+    log = (
+        "Traceback (most recent call last):\n"
+        "  File 'app.py', line 5, in <module>\n"
+        "ValueError: bad input\n"
+    )
+    result = await clf.classify(log)
+    assert result.error_type == ErrorType.LOGIC_ERROR

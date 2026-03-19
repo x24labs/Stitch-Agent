@@ -70,6 +70,19 @@ _RULES: dict[ErrorType, list[tuple[re.Pattern[str], float]]] = {
         (re.compile(r"SIGSEGV|Segmentation fault|core dumped", re.I), 0.9),
         (re.compile(r"Process finished with exit code [^0]"), 0.6),
     ],
+    ErrorType.BUILD: [
+        (re.compile(r"/bin/(?:sh|bash):.*not found", re.I), 1.0),
+        (re.compile(r"\bcommand not found\b", re.I), 0.9),
+        (
+            re.compile(r"\b(?:apt-get|apt|apk|yum|dnf|brew)\b.*(?:error|not found|failed)", re.I),
+            1.0,
+        ),
+        (re.compile(r"\b(?:npm|yarn|bun|pip|pip3)\b.*(?:error|failed|not found)", re.I), 0.9),
+        (re.compile(r"returned a non-zero exit code", re.I), 0.8),
+        (re.compile(r"curl:\s*\(\d+\)\s", re.I), 0.9),
+        (re.compile(r"\bCOPY failed\b|\bRUN returned non-zero exit code\b", re.I), 1.0),
+        (re.compile(r"\bdocker\b.*(?:error|failed|denied)", re.I), 0.8),
+    ],
 }
 
 _FILE_REF_RE = re.compile(

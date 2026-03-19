@@ -56,6 +56,7 @@ asyncio.run(main())
 | `format` | Haiku | yes |
 | `simple_type` | Haiku | yes |
 | `config_ci` | Haiku | yes |
+| `build` | Haiku | yes |
 | `complex_type` | Sonnet | yes |
 | `test_contract` | Sonnet | yes |
 | `logic_error` | — | escalate |
