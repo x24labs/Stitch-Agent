@@ -1,16 +1,11 @@
 from __future__ import annotations
 
 import json
-import os
-from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from runners.ci_runner import CIContext, build_context, detect_platform
-
-if TYPE_CHECKING:
-    pass
+from runners.ci_runner import build_context, detect_platform
 
 pytestmark = pytest.mark.asyncio
 
@@ -88,8 +83,6 @@ def test_build_context_gitlab_post_stage(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_build_context_github(monkeypatch: pytest.MonkeyPatch, tmp_path: object) -> None:
-    import tempfile
-
     event = {
         "workflow_run": {
             "id": 55555,
@@ -166,11 +159,11 @@ async def test_run_ci_after_script_mode(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
     monkeypatch.setenv("STITCH_ANTHROPIC_API_KEY", "fake-key")
 
-    from stitch_agent.models import FixResult
+    from stitch_agent.models import ErrorType, FixResult
 
     mock_result = FixResult(
         status="fixed",
-        error_type="lint",
+        error_type=ErrorType.LINT,
         confidence=0.95,
         reason="Fixed lint error",
         mr_url="https://gitlab.com/mr/1",

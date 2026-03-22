@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from stitch_agent.core.agent import StitchAgent
-from stitch_agent.models import FixRequest, FixResult
+from stitch_agent.models import FixRequest
 from stitch_agent.settings import StitchSettings
 
 
