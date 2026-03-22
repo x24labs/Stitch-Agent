@@ -217,6 +217,21 @@ class GitHubAdapter(CIPlatformAdapter):
             1 for pr in resp.json() if pr.get("head", {}).get("ref", "").startswith("stitch/fix-")
         )
 
+    async def list_failed_jobs(
+        self, project_id: str, pipeline_id: str
+    ) -> list[dict[str, str | int]]:
+        owner, repo = self._owner_repo(project_id)
+        resp = await self._client.get(
+            f"/repos/{owner}/{repo}/actions/runs/{pipeline_id}/jobs",
+            params={"filter": "latest"},
+        )
+        resp.raise_for_status()
+        return [
+            {"id": str(j["id"]), "name": j.get("name", ""), "status": j.get("conclusion", "")}
+            for j in resp.json().get("jobs", [])
+            if j.get("conclusion") == "failure"
+        ]
+
     async def get_clone_url(self, request: FixRequest) -> str:
         owner, repo = self._owner_repo(request.project_id)
         resp = await self._client.get(f"/repos/{owner}/{repo}")

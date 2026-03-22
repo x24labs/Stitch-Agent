@@ -153,6 +153,19 @@ class GitLabAdapter(CIPlatformAdapter):
         resp.raise_for_status()
         return sum(1 for mr in resp.json() if mr.get("source_branch", "").startswith("stitch/fix-"))
 
+    async def list_failed_jobs(
+        self, project_id: str, pipeline_id: str
+    ) -> list[dict[str, str | int]]:
+        resp = await self._client.get(
+            f"{self._pid(project_id)}/pipelines/{pipeline_id}/jobs",
+            params={"scope[]": "failed"},
+        )
+        resp.raise_for_status()
+        return [
+            {"id": str(j["id"]), "name": j.get("name", ""), "status": j.get("status", "failed")}
+            for j in resp.json()
+        ]
+
     async def aclose(self) -> None:
         await self._client.aclose()
 

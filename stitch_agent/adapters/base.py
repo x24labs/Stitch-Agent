@@ -43,3 +43,8 @@ class CIPlatformAdapter(ABC):
 
     @abstractmethod
     async def get_clone_url(self, request: FixRequest) -> str: ...
+
+    @abstractmethod
+    async def list_failed_jobs(
+        self, project_id: str, pipeline_id: str
+    ) -> list[dict[str, str | int]]: ...

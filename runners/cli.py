@@ -15,7 +15,7 @@ from stitch_agent.onboarding.report import CommandReport
 from stitch_agent.onboarding.setup import run_setup
 from stitch_agent.settings import StitchSettings
 
-_SUBCOMMANDS = {"fix", "setup", "doctor", "connect"}
+_SUBCOMMANDS = {"fix", "ci", "setup", "doctor", "connect"}
 
 
 def _add_fix_arguments(parser: argparse.ArgumentParser) -> None:
@@ -73,6 +73,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     connect_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
 
+    ci_parser = subparsers.add_parser(
+        "ci", help="Run inside CI — auto-detect platform and fix failed jobs"
+    )
+    ci_parser.add_argument("--output", choices=["json", "text"], default="text")
+    ci_parser.add_argument(
+        "--platform",
+        choices=["gitlab", "github"],
+        default=None,
+        help="Override auto-detection of CI platform",
+    )
+    ci_parser.add_argument(
+        "--max-jobs",
+        type=int,
+        default=5,
+        help="Max failed jobs to process (default 5)",
+    )
+
     doctor_parser = subparsers.add_parser("doctor", help="Run onboarding diagnostics")
     doctor_parser.add_argument("--repo", default=".", help="Repository root path")
     doctor_parser.add_argument("--platform", choices=["gitlab", "github"], default="gitlab")
@@ -94,6 +111,8 @@ def parse_cli_args(
 
 
 async def run(args: argparse.Namespace) -> int:
+    if args.command == "ci":
+        return await run_ci_command(args)
     if args.command == "doctor":
         return await run_doctor(args)
     if args.command == "setup":
@@ -172,6 +191,16 @@ async def run_fix(args: argparse.Namespace) -> int:
             print(f"   Code:       {result.escalation_reason_code}")
 
     return 0 if result.status == "fixed" else 1
+
+
+async def run_ci_command(args: argparse.Namespace) -> int:
+    from runners.ci_runner import run_ci
+
+    return await run_ci(
+        output_format=args.output,
+        platform_override=args.platform,
+        max_jobs=args.max_jobs,
+    )
 
 
 async def run_doctor(args: argparse.Namespace) -> int:

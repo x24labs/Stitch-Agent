@@ -67,7 +67,107 @@ export STITCH_ANTHROPIC_API_KEY=sk-ant-...
 export STITCH_GITLAB_TOKEN=glpat-...      # or STITCH_GITHUB_TOKEN=ghp_...
 ```
 
-### Fix a failed pipeline (CLI)
+### Add to your CI (30 seconds)
+
+The fastest way to get stitch running — copy one YAML snippet into your CI config. No server to deploy, no webhooks to configure.
+
+**GitLab CI** — add to `.gitlab-ci.yml`:
+
+```yaml
+# Option A: after_script (granular — each job reports its own failure)
+.stitch-fix: &stitch-fix
+  after_script:
+    - pip install stitch-agent
+    - stitch ci
+  except:
+    refs:
+      - /^stitch\//
+
+my-lint-job:
+  <<: *stitch-fix
+  script:
+    - ruff check .
+```
+
+```yaml
+# Option B: .post stage (catch-all — one job covers the whole pipeline)
+stitch-autofix:
+  stage: .post
+  when: on_failure
+  except:
+    refs:
+      - /^stitch\//
+  script:
+    - pip install stitch-agent
+    - stitch ci
+```
+
+**GitHub Actions** — create `.github/workflows/stitch.yml`:
+
+```yaml
+name: stitch-autofix
+on:
+  workflow_run:
+    workflows: ["*"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  fix:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install "stitch-agent[github]"
+      - run: stitch ci
+        env:
+          STITCH_ANTHROPIC_API_KEY: ${{ secrets.STITCH_ANTHROPIC_API_KEY }}
+          STITCH_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+That's it. When a pipeline fails, stitch reads the logs, generates a fix, and opens a PR.
+
+> **Loop prevention:** The `except: refs: [/^stitch\//]` rule (GitLab) and the workflow_run trigger (GitHub) ensure stitch never triggers itself. Additionally, the `max_attempts` setting (default 3) caps retries via the API.
+
+> **GitHub note:** `workflow_run` events fire 1-5 minutes after the triggering workflow completes. This is a GitHub platform limitation, not a stitch delay.
+
+#### GitLab: `after_script` vs `.post` stage
+
+| | `after_script` (Option A) | `.post` stage (Option B) |
+|---|---|---|
+| **Granularity** | Per-job — each job reports its own failure | Per-pipeline — one catch-all job |
+| **`CI_JOB_ID`** | Points to the failed job itself | Points to the stitch job (needs API discovery) |
+| **Setup** | YAML anchor on each job | Single extra job |
+| **Best for** | Repos where you want per-job fix PRs | Repos where you want a single fix PR per pipeline |
+
+## CI-native mode
+
+`stitch ci` auto-detects the platform from environment variables and processes all failed jobs in the current pipeline.
+
+```bash
+stitch ci                          # auto-detect platform, text output
+stitch ci --output json            # machine-readable output
+stitch ci --platform gitlab        # override auto-detection
+stitch ci --max-jobs 3             # limit jobs processed (default 5)
+```
+
+**How detection works:**
+
+| Environment variable | Platform |
+|---|---|
+| `CI_PROJECT_ID` | GitLab |
+| `GITHUB_REPOSITORY` | GitHub |
+
+GitLab mode is further refined by `CI_JOB_STATUS`:
+- Present and `"failed"` → `after_script` mode (single job, no API discovery)
+- Absent → `.post` stage mode (discovers failed jobs via API)
+
+## Alternative: CLI
+
+For manual use or scripting outside CI:
 
 ```bash
 stitch fix \
@@ -78,9 +178,7 @@ stitch fix \
   --branch main
 ```
 
-That's it. stitch reads the logs, generates a fix, and opens an MR.
-
-### Fix a failed pipeline (Python)
+### Python API
 
 ```python
 import asyncio
@@ -107,7 +205,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## GitHub support
+### GitHub
 
 ```python
 from stitch_agent import StitchAgent, FixRequest
@@ -126,6 +224,10 @@ request = FixRequest(
 ```
 
 Works with GitHub Actions workflow runs. Self-hosted GitHub Enterprise is supported via `STITCH_GITHUB_BASE_URL`.
+
+## Alternative: Webhook server
+
+For environments where you prefer a centralized server over per-repo CI jobs.
 
 ## Onboarding
 
@@ -169,9 +271,7 @@ stitch connect --repo . --platform gitlab --project-id 42 \
 
 Automatically creates the webhook in your GitLab/GitHub project so pipeline failures trigger stitch. No manual setup required.
 
-## Webhook server
-
-The easiest way to run stitch in production — deploy the webhook server and let your CI platform notify it on failures.
+Deploy the webhook server and let your CI platform notify it on failures.
 
 ```bash
 pip install "stitch-agent[webhook]"
@@ -380,7 +480,10 @@ Each example is copy-paste ready — set your env vars and run.
 ## CLI reference
 
 ```bash
-# Fix a failed pipeline
+# CI-native mode (recommended — run inside your CI pipeline)
+stitch ci [--output json|text] [--platform gitlab|github] [--max-jobs 5]
+
+# Fix a specific failed job
 stitch fix \
   --platform gitlab|github \
   --project-id <id> \
@@ -428,6 +531,7 @@ stitch_agent/
 
 runners/
 ├── cli.py              # CLI entry point
+├── ci_runner.py        # CI-native runner (auto-detect platform)
 ├── webhook.py          # FastAPI webhook server
 └── examples/           # Prefect, Temporal, Dagster integrations
 ```

@@ -183,6 +183,36 @@ async def test_get_previous_fix_count(adapter: GitHubAdapter, req: FixRequest) -
 
 
 @respx.mock
+async def test_list_failed_jobs(adapter: GitHubAdapter) -> None:
+    respx.get(f"{BASE}/repos/{OWNER}/{REPO}/actions/runs/999/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    {"id": 101, "name": "build", "conclusion": "success"},
+                    {"id": 102, "name": "lint", "conclusion": "failure"},
+                    {"id": 103, "name": "test", "conclusion": "failure"},
+                ]
+            },
+        )
+    )
+    jobs = await adapter.list_failed_jobs(PROJECT_ID, "999")
+    assert len(jobs) == 2
+    assert jobs[0]["id"] == "102"
+    assert jobs[0]["name"] == "lint"
+    assert jobs[1]["id"] == "103"
+
+
+@respx.mock
+async def test_list_failed_jobs_empty(adapter: GitHubAdapter) -> None:
+    respx.get(f"{BASE}/repos/{OWNER}/{REPO}/actions/runs/999/jobs").mock(
+        return_value=httpx.Response(200, json={"jobs": []})
+    )
+    jobs = await adapter.list_failed_jobs(PROJECT_ID, "999")
+    assert jobs == []
+
+
+@respx.mock
 async def test_get_clone_url(adapter: GitHubAdapter, req: FixRequest) -> None:
     respx.get(f"{BASE}/repos/{OWNER}/{REPO}").mock(
         return_value=httpx.Response(200, json={"clone_url": "https://github.com/acme/myrepo.git"})

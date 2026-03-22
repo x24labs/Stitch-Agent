@@ -155,3 +155,30 @@ async def test_get_previous_fix_count(adapter: GitLabAdapter, request_: FixReque
     )
     count = await adapter.get_previous_fix_count(request_)
     assert count == 2
+
+
+@respx.mock
+async def test_list_failed_jobs(adapter: GitLabAdapter) -> None:
+    respx.get(f"{BASE}/projects/{ENCODED_PID}/pipelines/100/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"id": 201, "name": "lint", "status": "failed"},
+                {"id": 202, "name": "test", "status": "failed"},
+            ],
+        )
+    )
+    jobs = await adapter.list_failed_jobs(PROJECT_ID, "100")
+    assert len(jobs) == 2
+    assert jobs[0]["id"] == "201"
+    assert jobs[0]["name"] == "lint"
+    assert jobs[1]["id"] == "202"
+
+
+@respx.mock
+async def test_list_failed_jobs_empty(adapter: GitLabAdapter) -> None:
+    respx.get(f"{BASE}/projects/{ENCODED_PID}/pipelines/100/jobs").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    jobs = await adapter.list_failed_jobs(PROJECT_ID, "100")
+    assert jobs == []
