@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.1 — 2026-03-22
+
+### Fixed
+
+- Fix HTTP client closed error in CI runner — unified adapter session for job discovery and processing
+
 ## v0.1.0 — 2026-03-22
 
 Initial public release.
