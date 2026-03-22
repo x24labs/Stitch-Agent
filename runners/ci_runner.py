@@ -146,37 +146,36 @@ async def run_ci(
         max_attempts=settings.max_attempts,
     )
 
-    # Determine which jobs to fix
+    # Determine which jobs to fix and process them in a single adapter session
     jobs_to_fix: list[dict[str, str]] = []
-
-    if ctx.job_id:
-        # after_script mode — single known job
-        jobs_to_fix = [{"id": ctx.job_id, "name": ctx.job_name or ""}]
-    else:
-        # .post stage or GitHub — discover failed jobs
-        async with adapter:
-            discovered = await adapter.list_failed_jobs(ctx.project_id, ctx.pipeline_id)
-        jobs_to_fix = [{"id": str(j["id"]), "name": str(j.get("name", ""))} for j in discovered]
-
-    if not jobs_to_fix:
-        if output_format == "json":
-            print(json.dumps({"status": "no_failures", "jobs": []}))
-        else:
-            print("No failed jobs found in pipeline.")
-        return 0
-
-    # Limit jobs to prevent rate-limit issues
-    if len(jobs_to_fix) > max_jobs:
-        print(
-            f"Found {len(jobs_to_fix)} failed jobs, processing first {max_jobs} "
-            f"(use --max-jobs to adjust).",
-            file=sys.stderr,
-        )
-        jobs_to_fix = jobs_to_fix[:max_jobs]
-
-    # Process each failed job
     results: list[dict[str, object]] = []
+
     async with adapter:
+        if ctx.job_id:
+            # after_script mode — single known job
+            jobs_to_fix = [{"id": ctx.job_id, "name": ctx.job_name or ""}]
+        else:
+            # .post stage or GitHub — discover failed jobs
+            discovered = await adapter.list_failed_jobs(ctx.project_id, ctx.pipeline_id)
+            jobs_to_fix = [{"id": str(j["id"]), "name": str(j.get("name", ""))} for j in discovered]
+
+        if not jobs_to_fix:
+            if output_format == "json":
+                print(json.dumps({"status": "no_failures", "jobs": []}))
+            else:
+                print("No failed jobs found in pipeline.")
+            return 0
+
+        # Limit jobs to prevent rate-limit issues
+        if len(jobs_to_fix) > max_jobs:
+            print(
+                f"Found {len(jobs_to_fix)} failed jobs, processing first {max_jobs} "
+                f"(use --max-jobs to adjust).",
+                file=sys.stderr,
+            )
+            jobs_to_fix = jobs_to_fix[:max_jobs]
+
+        # Process each failed job
         for job in jobs_to_fix:
             request = FixRequest(
                 platform=platform,
