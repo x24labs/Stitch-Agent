@@ -60,7 +60,7 @@ testpaths = ["tests"]
         anthropic_api_key="sk-ant-test",
         github_token="ghp-test",
         webhook_secret="secret-value",
-        validation_mode="trusted",
+
     )
 
     connect_report = await run_connect(
@@ -121,7 +121,7 @@ async def test_gitlab_onboarding_flow_setup_connect_doctor(tmp_path: Path) -> No
         anthropic_api_key="sk-ant-test",
         gitlab_token="glpat-test",
         webhook_secret="secret-value",
-        validation_mode="trusted",
+
     )
 
     connect_report = await run_connect(

@@ -27,7 +27,7 @@ async def test_doctor_returns_success_when_repo_ready(tmp_path: Path) -> None:
     settings = StitchSettings(
         anthropic_api_key="sk-ant-test",
         gitlab_token="glpat-test",
-        validation_mode="trusted",
+
     )
 
     report = await run_doctor_checks(platform="gitlab", repo_root=tmp_path, settings=settings)
@@ -45,7 +45,7 @@ async def test_doctor_fails_when_config_file_missing(tmp_path: Path) -> None:
     settings = StitchSettings(
         anthropic_api_key="sk-ant-test",
         gitlab_token="glpat-test",
-        validation_mode="trusted",
+
     )
 
     report = await run_doctor_checks(platform="gitlab", repo_root=tmp_path, settings=settings)
@@ -62,7 +62,7 @@ async def test_doctor_skips_connectivity_without_provider_token(tmp_path: Path) 
     settings = StitchSettings(
         anthropic_api_key="sk-ant-test",
         gitlab_token="",
-        validation_mode="trusted",
+
     )
 
     report = await run_doctor_checks(platform="gitlab", repo_root=tmp_path, settings=settings)
@@ -85,7 +85,7 @@ async def test_doctor_reports_missing_required_github_scopes(tmp_path: Path) -> 
     settings = StitchSettings(
         anthropic_api_key="sk-ant-test",
         github_token="ghp-test",
-        validation_mode="trusted",
+
     )
 
     report = await run_doctor_checks(platform="github", repo_root=tmp_path, settings=settings)
@@ -114,7 +114,7 @@ async def test_doctor_checks_github_repo_and_hooks_permissions_when_project_id_s
     settings = StitchSettings(
         anthropic_api_key="sk-ant-test",
         github_token="ghp-test",
-        validation_mode="trusted",
+
     )
 
     report = await run_doctor_checks(
@@ -145,7 +145,7 @@ async def test_doctor_reports_missing_required_gitlab_api_scope(tmp_path: Path) 
     settings = StitchSettings(
         anthropic_api_key="sk-ant-test",
         gitlab_token="glpat-test",
-        validation_mode="trusted",
+
     )
 
     report = await run_doctor_checks(platform="gitlab", repo_root=tmp_path, settings=settings)
@@ -178,7 +178,7 @@ async def test_doctor_checks_gitlab_project_and_hooks_permissions_when_project_i
     settings = StitchSettings(
         anthropic_api_key="sk-ant-test",
         gitlab_token="glpat-test",
-        validation_mode="trusted",
+
     )
 
     report = await run_doctor_checks(

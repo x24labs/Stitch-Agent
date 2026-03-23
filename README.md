@@ -3,7 +3,7 @@
   <p align="center"><strong>The AI that stitches your CI back together.</strong></p>
   <p align="center">
     Open-source AI agent that autonomously detects, diagnoses, and fixes CI pipeline failures.<br/>
-    Platform-agnostic. Orchestrator-agnostic. Zero human intervention required.
+    Platform-agnostic. Zero config. Lives inside your CI — no servers, no webhooks.
   </p>
 </p>
 
@@ -17,7 +17,7 @@
 
 **Your CI pipeline just failed.** Again. A missing import. A linting rule. A type error in the code you didn't even touch. You context-switch, open the logs, squint at the error, make a one-line fix, push, wait. Rinse, repeat.
 
-**stitch fixes that for you.** Point it at your failed pipeline, and it will read the logs, classify the error, generate a minimal patch, and open a PR — all in seconds.
+**stitch fixes that for you.** Add two jobs to your CI config and stitch will read the logs, classify the error, generate a fix, verify it passes CI, and open a PR — all automatically.
 
 ## How it works
 
@@ -28,10 +28,9 @@ Failed pipeline ──> stitch ──> fix branch ──> CI verifies ──> MR
 1. **Fetch** — downloads job logs and the diff that triggered the failure
 2. **Classify** — identifies the error type using 150+ patterns and confidence scoring
 3. **Fix** — Claude generates a minimal, conservative patch for affected files
-4. **Validate** — optionally runs the fix in a Docker sandbox (strict mode)
-5. **Branch** — pushes the fix to a `stitch/fix-*` branch
-6. **Verify** — CI runs on the fix branch to confirm the fix actually works
-7. **PR** — if CI passes, stitch opens a Merge/Pull Request automatically
+4. **Branch** — pushes the fix to a `stitch/fix-*` branch
+5. **Verify** — CI runs on the fix branch to confirm the fix actually works
+6. **PR** — if CI passes, stitch opens a Merge/Pull Request automatically
 
 ### Two-phase CI flow
 
@@ -65,30 +64,28 @@ All error types are attempted. Classification determines which model to use — 
 ### Install
 
 ```bash
-pip install stitch-agent                # core (GitLab support included)
-pip install "stitch-agent[github]"      # add GitHub support
-pip install "stitch-agent[webhook]"     # add webhook server
-pip install "stitch-agent[all]"         # everything
+pip install stitch-agent
 ```
 
 Requires **Python 3.12+**.
 
 ### Set credentials
 
+Add these as CI/CD variables in your project:
+
 ```bash
-export STITCH_ANTHROPIC_API_KEY=sk-ant-...
-export STITCH_GITLAB_TOKEN=glpat-...      # or STITCH_GITHUB_TOKEN=ghp_...
+STITCH_ANTHROPIC_API_KEY=sk-ant-...
+STITCH_GITLAB_TOKEN=glpat-...      # or STITCH_GITHUB_TOKEN=ghp_...
 ```
 
 ### Add to your CI (30 seconds)
 
-The fastest way to get stitch running — copy one YAML snippet into your CI config. No server to deploy, no webhooks to configure.
+Copy one YAML snippet into your CI config. No server to deploy, no webhooks to configure.
 
 **GitLab CI** — add to `.gitlab-ci.yml`:
 
 ```yaml
 # Option A: after_script (granular — each job reports its own failure)
-# Two jobs: stitch-fix (on failure) + stitch-verify (on success)
 
 .stitch-fix: &stitch-fix
   after_script:
@@ -103,10 +100,10 @@ my-lint-job:
   script:
     - ruff check .
 
-# Verify: runs on stitch/fix-* branches when CI passes → creates MR
-stitch-verify:
+# Runs on stitch/fix-* branches: verify (CI passed → MR) or escalate (CI failed)
+stitch-check:
   stage: .post
-  when: on_success
+  when: always
   only:
     refs:
       - /^stitch\//
@@ -117,7 +114,6 @@ stitch-verify:
 
 ```yaml
 # Option B: .post stage (catch-all — one job covers the whole pipeline)
-# Two jobs: stitch-fix (on failure) + stitch-verify (on success)
 
 stitch-fix:
   stage: .post
@@ -129,9 +125,9 @@ stitch-fix:
     - pip install stitch-agent
     - stitch ci
 
-stitch-verify:
+stitch-check:
   stage: .post
-  when: on_success
+  when: always
   only:
     refs:
       - /^stitch\//
@@ -154,7 +150,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  # Phase 1: Fix — runs when CI fails on a non-stitch branch
+  # Fix: CI failed on a non-stitch branch → generate fix
   fix:
     if: >-
       github.event.workflow_run.conclusion == 'failure' &&
@@ -162,32 +158,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: pip install "stitch-agent[github]"
+      - run: pip install stitch-agent
       - run: stitch ci
         env:
           STITCH_ANTHROPIC_API_KEY: ${{ secrets.STITCH_ANTHROPIC_API_KEY }}
           STITCH_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Phase 2: Verify — runs when CI passes on a stitch/fix-* branch
-  verify:
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      startsWith(github.event.workflow_run.head_branch, 'stitch/')
+  # Check: stitch/fix-* branch completed → verify (create MR) or escalate
+  check:
+    if: startsWith(github.event.workflow_run.head_branch, 'stitch/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: pip install "stitch-agent[github]"
+      - run: pip install stitch-agent
       - run: stitch ci
         env:
           STITCH_ANTHROPIC_API_KEY: ${{ secrets.STITCH_ANTHROPIC_API_KEY }}
           STITCH_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-That's it. When a pipeline fails, stitch generates a fix and pushes it to a `stitch/fix-*` branch. CI runs on that branch, and if it passes, stitch creates the MR automatically.
+That's it. When a pipeline fails, stitch generates a fix and pushes it to a `stitch/fix-*` branch. CI runs on that branch, and:
+- **CI passes** → stitch creates the MR automatically
+- **CI fails** → stitch escalates (the fix didn't work, human review needed)
 
-> **Two-phase flow:** The fix is verified by your CI before any MR is created. If the fix doesn't pass CI, no MR is opened — zero noise.
-
-> **Loop prevention:** The `except`/`only` rules (GitLab) and branch name conditions (GitHub) ensure stitch only fixes normal branches and only verifies fix branches. The `max_attempts` setting (default 3) caps retries via the API.
+> **Loop prevention:** The `except`/`only` rules (GitLab) and branch name conditions (GitHub) ensure stitch only fixes normal branches. The `stitch-check` job auto-detects whether to verify or escalate by checking for failed jobs in the pipeline. The `max_attempts` setting (default 3) caps retries via the API.
 
 > **GitHub note:** `workflow_run` events fire 1-5 minutes after the triggering workflow completes. This is a GitHub platform limitation, not a stitch delay.
 
@@ -197,10 +191,10 @@ That's it. When a pipeline fails, stitch generates a fix and pushes it to a `sti
 |---|---|---|
 | **Granularity** | Per-job — each job reports its own failure | Per-pipeline — one catch-all job |
 | **`CI_JOB_ID`** | Points to the failed job itself | Points to the stitch job (needs API discovery) |
-| **Setup** | YAML anchor on each job + shared verify job | Two extra jobs |
+| **Setup** | YAML anchor on each job + shared check job | Two extra jobs |
 | **Best for** | Repos where you want per-job fix PRs | Repos where you want a single fix PR per pipeline |
 
-Both options include the `stitch-verify` job that creates the MR after CI passes on the fix branch.
+Both options include the `stitch-check` job that auto-detects whether to verify or escalate on fix branches.
 
 ## CI-native mode
 
@@ -224,9 +218,13 @@ GitLab mode is further refined by `CI_JOB_STATUS`:
 - Present and `"failed"` → `after_script` mode (single job, no API discovery)
 - Absent → `.post` stage mode (discovers failed jobs via API)
 
+On `stitch/fix-*` branches, `stitch ci` auto-detects the right action:
+- **No failed jobs** → verify mode (creates MR)
+- **Failed jobs** → escalate mode (reports fix didn't work)
+
 ## Alternative: CLI
 
-For manual use or scripting outside CI:
+For manual use or scripting outside CI (creates MR immediately, no two-phase flow):
 
 ```bash
 stitch fix \
@@ -264,33 +262,11 @@ async def main():
 asyncio.run(main())
 ```
 
-### GitHub
-
-```python
-from stitch_agent import StitchAgent, FixRequest
-from stitch_agent.adapters.github import GitHubAdapter
-
-adapter = GitHubAdapter(token="ghp_...")
-agent = StitchAgent(adapter=adapter, anthropic_api_key="sk-ant-...")
-
-request = FixRequest(
-    platform="github",
-    project_id="org/repo",
-    pipeline_id="12345678",   # workflow run ID
-    job_id="abc123def",       # head SHA
-    branch="feature/my-fix",
-)
-```
-
-Works with GitHub Actions workflow runs. Self-hosted GitHub Enterprise is supported via `STITCH_GITHUB_BASE_URL`.
-
-## Alternative: Webhook server
-
-For environments where you prefer a centralized server over per-repo CI jobs.
+Works with GitHub too — use `GitHubAdapter` and `platform="github"`. Self-hosted instances are supported via `STITCH_GITLAB_BASE_URL` / `STITCH_GITHUB_BASE_URL`.
 
 ## Onboarding
 
-stitch includes three commands to get you set up fast:
+stitch includes commands to get you set up fast:
 
 ### `stitch setup` — auto-detect your project
 
@@ -298,12 +274,7 @@ stitch includes three commands to get you set up fast:
 stitch setup --repo . --platform gitlab
 ```
 
-Scans your repo and generates a `.stitch.yml` config by detecting:
-- **Languages** — Python, TypeScript, Go, Ruby
-- **Linter** — ruff, eslint, golangci-lint
-- **Test runner** — pytest, jest, vitest, rspec, go test
-- **Package manager** — pip, npm, yarn, pnpm, bun, go
-- **CI provider** — GitLab CI, GitHub Actions
+Scans your repo and generates a `.stitch.yml` config by detecting languages, linter, test runner, package manager, and CI provider.
 
 ### `stitch doctor` — health check
 
@@ -311,66 +282,7 @@ Scans your repo and generates a `.stitch.yml` config by detecting:
 stitch doctor --repo . --platform gitlab --project-id 42
 ```
 
-Runs 15+ diagnostic checks:
-- Python version compatibility
-- API keys and tokens configured
-- Platform API connectivity
-- OAuth scopes and permissions
-- Webhook access
-- Docker availability (for strict mode)
-
-Returns clear remediation steps for any issues found.
-
-### `stitch connect` — auto-provision webhooks
-
-```bash
-stitch connect --repo . --platform gitlab --project-id 42 \
-  --webhook-url https://your-server:8000/webhook/gitlab
-```
-
-Automatically creates the webhook in your GitLab/GitHub project so pipeline failures trigger stitch. No manual setup required.
-
-Deploy the webhook server and let your CI platform notify it on failures.
-
-```bash
-pip install "stitch-agent[webhook]"
-
-export STITCH_ANTHROPIC_API_KEY=sk-ant-...
-export STITCH_GITLAB_TOKEN=glpat-...
-export STITCH_WEBHOOK_SECRET=my-hmac-secret
-
-python -m runners.webhook
-# or: stitch-webhook
-```
-
-### Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/webhook/gitlab` | POST | Receives GitLab pipeline failure events |
-| `/webhook/github` | POST | Receives GitHub workflow_run failure events |
-| `/health` | GET | Health check (`{"status": "ok"}`) |
-
-### Security
-
-- **HMAC signature verification** — GitLab token or GitHub SHA256 HMAC
-- **API key authentication** — Bearer token support
-- **Rate limiting** — per-IP sliding window (configurable)
-
-### GitLab setup
-
-**Settings > Webhooks > Add webhook**
-- URL: `https://your-server:8000/webhook/gitlab`
-- Secret token: your `STITCH_WEBHOOK_SECRET`
-- Trigger: **Pipeline events**
-
-### GitHub setup
-
-**Settings > Webhooks > Add webhook**
-- Payload URL: `https://your-server:8000/webhook/github`
-- Content type: `application/json`
-- Secret: your `STITCH_WEBHOOK_SECRET`
-- Events: **Workflow runs**
+Runs diagnostic checks on Python version, API keys, platform connectivity, and permissions. Returns clear remediation steps for any issues found.
 
 ## Configuration
 
@@ -392,17 +304,8 @@ STITCH_GITHUB_BASE_URL=https://github.example.com/api/v3
 STITCH_HAIKU_CONFIDENCE_THRESHOLD=0.80    # default
 STITCH_SONNET_CONFIDENCE_THRESHOLD=0.40   # default
 
-# Validation
-STITCH_VALIDATION_MODE=trusted            # or 'strict' (requires Docker)
+# Max fix attempts per branch (default 3)
 STITCH_MAX_ATTEMPTS=3
-
-# Webhook server
-STITCH_WEBHOOK_HOST=0.0.0.0
-STITCH_WEBHOOK_PORT=8000
-STITCH_WEBHOOK_SECRET=...
-STITCH_WEBHOOK_API_KEYS=key1,key2
-STITCH_WEBHOOK_RATE_LIMIT=60              # requests per window
-STITCH_WEBHOOK_RATE_WINDOW=60             # seconds
 ```
 
 ### Per-repo config (`.stitch.yml`)
@@ -420,24 +323,7 @@ conventions:
   - "Always use explicit return types on public functions."
   - "Never downgrade dependency versions."
 
-# Which error types to auto-fix
-auto_fix:
-  - lint
-  - format
-  - simple_type
-  - config_ci
-  - complex_type
-  - test_contract
-
-# Which to escalate (never auto-fix)
-escalate:
-  - logic_errors
-  - breaking_changes
-
 max_attempts: 3
-
-# Override Docker image for strict validation
-docker_image: python:3.12-slim
 
 # Notifications on escalation
 notify:
@@ -450,39 +336,13 @@ notify:
       url: https://hooks.example.com/stitch
 ```
 
-Run `stitch setup` to auto-generate this file, or copy `.stitch.example.yml` from this repo.
-
-## Validation modes
-
-### Trusted (default)
-
-Generates the fix and pushes to a fix branch. In CI mode, the MR is created after CI verifies the fix. In CLI mode (`stitch fix`), the MR is created immediately. Fast, no extra dependencies.
-
-### Strict (requires Docker)
-
-Applies the patch in an isolated Docker container and runs your test suite before opening a PR. Only creates the PR if tests pass.
-
-```bash
-STITCH_VALIDATION_MODE=strict stitch fix ...
-```
-
-Docker images are auto-selected based on your language:
-
-| Language | Image |
-|----------|-------|
-| Python | `python:3.12-slim` |
-| JavaScript/TypeScript | `node:20-slim` |
-| Go | `golang:1.22-alpine` |
-| Ruby | `ruby:3.3-slim` |
-
-Override with `docker_image` in `.stitch.yml`.
+Run `stitch setup` to auto-generate this file.
 
 ## Notifications and escalation
 
-When stitch can't auto-fix an error (low confidence or unsupported error type), it escalates. Configure notification channels so your team knows immediately:
+When stitch can't auto-fix an error (low confidence, max attempts reached), it escalates. Configure notification channels in `.stitch.yml`:
 
 ```yaml
-# .stitch.yml
 notify:
   channels:
     - type: slack
@@ -504,45 +364,13 @@ agent = StitchAgent(
 )
 ```
 
-## Fix history
-
-stitch records every fix attempt locally in SQLite for auditing and pattern analysis:
-
-```python
-from stitch_agent.history import HistoryStore
-
-with HistoryStore(".stitch/history.db") as store:
-    # Recent fix attempts
-    records = store.get_recent("org/repo", limit=20)
-
-    # Success rate by error type
-    pattern = store.get_pattern("org/repo", "lint")
-    print(f"Lint success rate: {pattern.success_rate:.0%}")
-    print(f"Total: {pattern.total} | Fixed: {pattern.fixed} | Escalated: {pattern.escalated}")
-    print(f"Avg confidence: {pattern.avg_confidence:.2f}")
-```
-
-History is stored automatically at `{workspace_root}/.stitch/history.db`.
-
-## Orchestrator integrations
-
-Ready-to-use examples for popular workflow engines:
-
-| Engine | File | Use case |
-|--------|------|----------|
-| **Prefect** | `runners/examples/prefect_runner.py` | Poll projects for failures, auto-fix with retries |
-| **Temporal** | `runners/examples/temporal_runner.py` | Durable workflow with 10-min timeout per fix |
-| **Dagster** | `runners/examples/dagster_runner.py` | Sensor-based trigger with web UI dashboard |
-
-Each example is copy-paste ready — set your env vars and run.
-
 ## CLI reference
 
 ```bash
 # CI-native mode (recommended — run inside your CI pipeline)
 stitch ci [--output json|text] [--platform gitlab|github] [--max-jobs 5]
 
-# Fix a specific failed job
+# Fix a specific failed job (creates MR immediately)
 stitch fix \
   --platform gitlab|github \
   --project-id <id> \
@@ -561,15 +389,9 @@ stitch setup --repo . --platform gitlab|github [--json]
 
 # Run health checks
 stitch doctor --repo . --platform gitlab|github [--project-id <id>] [--json]
-
-# Auto-provision webhook in your CI platform
-stitch connect --repo . --platform gitlab|github [--project-id <id>] \
-  [--webhook-url <url>] [--json]
 ```
 
-**Exit codes:** `0` = success/fixed, `1` = error/escalated, `2` = prompts needed
-
-All commands support `--json` for machine-readable output.
+**Exit codes:** `0` = success/fixed, `1` = error/escalated
 
 ## Architecture
 
@@ -580,9 +402,9 @@ stitch_agent/
 │   ├── agent.py        # Main fix loop
 │   ├── classifier.py   # Error detection (150+ patterns)
 │   ├── fixer.py        # Claude-powered patch generation
-│   ├── validator.py    # Docker sandbox validation
+│   ├── pr_creator.py   # MR/PR creation
 │   └── notifier.py     # Multi-channel notifications
-├── onboarding/         # setup, doctor, connect commands
+├── onboarding/         # setup, doctor commands
 ├── models.py           # FixRequest, FixResult, ErrorType
 ├── history.py          # SQLite fix tracking
 ├── settings.py         # Environment configuration
@@ -590,37 +412,8 @@ stitch_agent/
 
 runners/
 ├── cli.py              # CLI entry point
-├── ci_runner.py        # CI-native runner (auto-detect platform)
-├── webhook.py          # FastAPI webhook server
-└── examples/           # Prefect, Temporal, Dagster integrations
+└── ci_runner.py        # CI-native runner (two-phase: fix + verify)
 ```
-
-## Contributing
-
-```bash
-git clone https://github.com/g24r/stitch.git
-cd stitch
-pip install -e ".[dev]"
-
-# Run tests
-pytest
-
-# Lint
-ruff check .
-
-# Type check
-pyright
-```
-
-## Publishing
-
-```bash
-pip install "stitch-agent[publish]"
-python -m build
-twine upload dist/*
-```
-
-Or push a `v*` tag to trigger the GitHub Actions publish workflow (uses PyPI Trusted Publisher).
 
 ## License
 

@@ -2,9 +2,10 @@
 
 Detects platform from environment variables and processes failed jobs automatically.
 
-Two-phase flow:
-  1. FIX mode  — CI failed on a normal branch → generate fix, create stitch/fix-* branch (no MR)
-  2. VERIFY mode — CI passed on a stitch/fix-* branch → create MR
+Three modes on stitch/fix-* branches (auto-detected):
+  1. FIX mode      — CI failed on a normal branch → generate fix, create stitch/fix-* branch
+  2. VERIFY mode   — CI passed on stitch/fix-* → create MR
+  3. ESCALATE mode — CI failed on stitch/fix-* → notify team, fix didn't work
 
 GitLab modes (fix phase):
   - after_script: CI_JOB_STATUS present, job_id is the failed job itself
@@ -141,19 +142,25 @@ def _build_adapter(platform: Literal["gitlab", "github"], ctx: CIContext, settin
     return GitHubAdapter(token=settings.github_token, base_url=base_url)
 
 
-async def _run_verify_mode(
+def _extract_target_branch(commit_msg: str) -> str | None:
+    match = _TARGET_RE.search(commit_msg)
+    return match.group(1).strip() if match else None
+
+
+async def _run_stitch_branch_mode(
     ctx: CIContext,
     platform: Literal["gitlab", "github"],
     settings: StitchSettings,
     output_format: str,
 ) -> int:
-    """CI passed on a stitch/fix-* branch — extract target branch and create MR."""
+    """Handle stitch/fix-* branches: check for failures → verify or escalate."""
     adapter = _build_adapter(platform, ctx, settings)
 
     async with adapter:
+        # Get target branch from commit metadata
         commit_msg = await adapter.get_latest_commit_message(ctx.project_id, ctx.branch)
-        target_match = _TARGET_RE.search(commit_msg)
-        if not target_match:
+        target_branch = _extract_target_branch(commit_msg)
+        if not target_branch:
             msg = (
                 f"Cannot determine target branch from commit on {ctx.branch}. "
                 f"Expected 'Stitch-Target: <branch>' trailer in commit message."
@@ -164,37 +171,59 @@ async def _run_verify_mode(
                 print(f"\u274c {msg}", file=sys.stderr)
             return 1
 
-        target_branch = target_match.group(1).strip()
+        # Check if there are failed jobs in this pipeline (excluding stitch jobs)
+        failed_jobs = await adapter.list_failed_jobs(ctx.project_id, ctx.pipeline_id)
+        non_stitch_failures = [
+            j for j in failed_jobs
+            if not str(j.get("name", "")).startswith("stitch")
+        ]
 
-        # Build MR description from commit message
-        first_line = commit_msg.split("\n", 1)[0]
-        title = f"stitch: {first_line}" if not first_line.startswith("stitch:") else first_line
-        description = (
-            f"## Automated fix by stitch\n\n"
-            f"**Fix branch:** `{ctx.branch}`\n"
-            f"**Target branch:** `{target_branch}`\n\n"
-            f"### Commit message\n```\n{commit_msg.strip()}\n```\n\n"
-            f"CI passed on the fix branch — this fix has been verified.\n\n"
-            f"---\n"
-            f"*This MR was created automatically by "
-            f"[stitch-agent](https://github.com/g24r/stitch).*"
+        if non_stitch_failures:
+            return await _handle_fix_failed(
+                ctx, target_branch, non_stitch_failures, output_format
+            )
+
+        return await _handle_fix_verified(
+            ctx, platform, adapter, target_branch, commit_msg, output_format
         )
 
-        # Create a FixRequest pointing to the target branch
-        request = FixRequest(
-            platform=platform,
-            project_id=ctx.project_id,
-            pipeline_id=ctx.pipeline_id,
-            job_id="0",
-            branch=target_branch,
-        )
 
-        mr_url = await adapter.create_merge_request(
-            request=request,
-            fix_branch=ctx.branch,
-            title=title,
-            description=description,
-        )
+async def _handle_fix_verified(
+    ctx: CIContext,
+    platform: Literal["gitlab", "github"],
+    adapter,
+    target_branch: str,
+    commit_msg: str,
+    output_format: str,
+) -> int:
+    """CI passed on fix branch — create MR."""
+    first_line = commit_msg.split("\n", 1)[0]
+    title = f"stitch: {first_line}" if not first_line.startswith("stitch:") else first_line
+    description = (
+        f"## Automated fix by stitch\n\n"
+        f"**Fix branch:** `{ctx.branch}`\n"
+        f"**Target branch:** `{target_branch}`\n\n"
+        f"### Commit message\n```\n{commit_msg.strip()}\n```\n\n"
+        f"CI passed on the fix branch — this fix has been verified.\n\n"
+        f"---\n"
+        f"*This MR was created automatically by "
+        f"[stitch-agent](https://github.com/g24r/stitch).*"
+    )
+
+    request = FixRequest(
+        platform=platform,
+        project_id=ctx.project_id,
+        pipeline_id=ctx.pipeline_id,
+        job_id="0",
+        branch=target_branch,
+    )
+
+    mr_url = await adapter.create_merge_request(
+        request=request,
+        fix_branch=ctx.branch,
+        title=title,
+        description=description,
+    )
 
     result = {
         "status": "verified",
@@ -213,6 +242,39 @@ async def _run_verify_mode(
     return 0
 
 
+async def _handle_fix_failed(
+    ctx: CIContext,
+    target_branch: str,
+    failed_jobs: list[dict],
+    output_format: str,
+) -> int:
+    """CI failed on fix branch — escalate, the fix didn't work."""
+    job_names = [str(j.get("name", j.get("id", "?"))) for j in failed_jobs]
+
+    result = {
+        "status": "fix_failed",
+        "fix_branch": ctx.branch,
+        "target_branch": target_branch,
+        "failed_jobs": job_names,
+        "reason": (
+            f"Fix on {ctx.branch} did not pass CI. "
+            f"Failed jobs: {', '.join(job_names)}. "
+            f"The fix introduced new errors or did not resolve the original issue. "
+            f"Human review needed."
+        ),
+    }
+
+    if output_format == "json":
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"\u26a0\ufe0f [fix_failed] Fix on {ctx.branch} did not pass CI")
+        print(f"   Target: {target_branch}")
+        print(f"   Failed jobs: {', '.join(job_names)}")
+        print("   The fix introduced new errors. Human review needed.")
+
+    return 1
+
+
 async def _run_fix_mode(
     ctx: CIContext,
     platform: Literal["gitlab", "github"],
@@ -228,7 +290,6 @@ async def _run_fix_mode(
         anthropic_api_key=settings.anthropic_api_key,
         haiku_confidence_threshold=settings.haiku_confidence_threshold,
         sonnet_confidence_threshold=settings.sonnet_confidence_threshold,
-        validation_mode=settings.validation_mode,
         max_attempts=settings.max_attempts,
     )
 
@@ -295,7 +356,7 @@ async def run_ci(
     settings = StitchSettings()
 
     if _is_stitch_branch(ctx.branch):
-        return await _run_verify_mode(ctx, platform, settings, output_format)
+        return await _run_stitch_branch_mode(ctx, platform, settings, output_format)
 
     return await _run_fix_mode(ctx, platform, settings, output_format, max_jobs)
 

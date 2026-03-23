@@ -165,7 +165,6 @@ async def run_fix(args: argparse.Namespace) -> int:
         anthropic_api_key=settings.anthropic_api_key,
         haiku_confidence_threshold=haiku_thresh,
         sonnet_confidence_threshold=sonnet_thresh,
-        validation_mode=settings.validation_mode,
         max_attempts=settings.max_attempts,
     )
 

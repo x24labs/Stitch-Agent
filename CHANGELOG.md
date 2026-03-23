@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.1.5 — 2026-03-23
+
+### Removed
+
+- **Webhook server** — `runners/webhook.py` and all webhook configuration (stitch lives in CI now)
+- **Orchestrator examples** — `runners/examples/` (Prefect, Temporal, Dagster) — CI-native approach replaces them
+- **Strict validation mode** — Docker sandbox (`validator.py`, `workspace.py`) — CI pipeline verifies fixes natively
+- `validation_mode` setting and all webhook-related env vars from settings
+- Contributing section and `stitch connect` command from README
+
+### Changed
+
+- README rewritten: focused on CI-native approach, removed all webhook/server documentation
+- Architecture diagram updated to reflect simplified codebase
+- `stitch-check` replaces separate `stitch-verify`/`stitch-retry` jobs — single job with `when: always`
+- On stitch/fix-* branches, auto-detects verify vs escalate by checking for failed jobs in pipeline
+- When fix doesn't pass CI, escalates with clear message instead of silent failure
+
 ## v0.1.4 — 2026-03-23
 
 ### Added

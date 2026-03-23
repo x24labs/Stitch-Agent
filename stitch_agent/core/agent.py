@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from stitch_agent.config import parse_config
 from stitch_agent.core.classifier import Classifier
 from stitch_agent.core.fixer import Fixer
 from stitch_agent.core.pr_creator import PRCreator
-from stitch_agent.core.validator import Validator
 from stitch_agent.history import HistoryStore, default_db_path
 from stitch_agent.models import (
     ESCALATION_TYPES,
@@ -32,7 +31,6 @@ class StitchAgent:
         anthropic_api_key: str,
         haiku_confidence_threshold: float = 0.80,
         sonnet_confidence_threshold: float = 0.40,
-        validation_mode: Literal["trusted", "strict"] = "trusted",
         max_attempts: int = 3,
         escalation_callback: EscalationCallback | None = None,
         history_store: HistoryStore | None = None,
@@ -45,10 +43,8 @@ class StitchAgent:
         self.escalation_callback = escalation_callback
         self.classifier = Classifier()
         self.fixer = Fixer(anthropic_api_key)
-        self.validator = Validator(mode=validation_mode)
         self.pr_creator = PRCreator(adapter)
         self._api_key = anthropic_api_key
-        self._validation_mode: Literal["trusted", "strict"] = validation_mode
         self._history = history_store or HistoryStore(default_db_path(workspace_root))
 
     def _get_threshold(self, error_type: ErrorType) -> float:
@@ -142,18 +138,6 @@ class StitchAgent:
             await self._notify(request, result, config)
             return result
 
-        if self._validation_mode == "strict":
-            validation_result = await self._strict_validate(request, fix_patch.changes)
-            if not validation_result.passed:
-                result = self._escalate(
-                    classification.error_type,
-                    classification.confidence,
-                    f"Strict validation failed: {validation_result.output[:500]}",
-                    "validation_failed",
-                )
-                await self._notify(request, result, config)
-                return result
-
         fix_id = request.pipeline_id
         changes = [{"path": c.path, "content": c.new_content} for c in fix_patch.changes]
 
@@ -188,27 +172,6 @@ class StitchAgent:
         self._history.record(request, result)
         return result
 
-    async def _strict_validate(
-        self,
-        request: FixRequest,
-        changes: list,
-    ):
-
-        from stitch_agent.core.workspace import WorkspaceManager
-
-        workspace = WorkspaceManager()
-        clone_url = await self.adapter.get_clone_url(request)
-        await workspace.ensure_clone(clone_url, request.project_id)
-        worktree_path, _ = await workspace.create_worktree(request.project_id, request.branch)
-        try:
-            for change in changes:
-                target = worktree_path / change.path
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(change.new_content)
-            return await self.validator.validate(worktree_path)
-        finally:
-            await workspace.cleanup_worktree(request.project_id, worktree_path)
-
     async def _notify(
         self,
         request: FixRequest,
@@ -235,5 +198,4 @@ class StitchAgent:
         config = parse_config(raw)
         self.classifier = Classifier(config=config)
         self.fixer = Fixer(self._api_key, config=config)
-        self.validator = Validator(mode=self._validation_mode, config=config)
         return config
