@@ -59,13 +59,15 @@ async def test_escalates_when_max_attempts_reached() -> None:
     assert "Max attempts" in result.reason
 
 
-async def test_escalates_for_logic_error_type() -> None:
+async def test_logic_error_attempts_fix_with_sonnet() -> None:
     adapter = _make_adapter(
         job_log="Traceback (most recent call last):\n  File 'app.py'\nValueError: bad input\n"
     )
+    mock_patch = FixPatch(changes=[FileChange(path="app.py", new_content="fixed")])
     agent = _make_agent(adapter)
-    result = await agent.fix(_make_request())
-    assert result.status == "escalate"
+    with patch.object(agent.fixer, "generate_fix", new_callable=AsyncMock, return_value=mock_patch):
+        result = await agent.fix(_make_request())
+    assert result.status == "fixed"
     assert result.error_type == ErrorType.LOGIC_ERROR
 
 
