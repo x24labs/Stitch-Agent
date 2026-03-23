@@ -118,33 +118,14 @@ class StitchAgent:
         for file_path in classification.affected_files:
             try:
                 file_contents[file_path] = await self.adapter.fetch_file_content(request, file_path)
-            except Exception as exc:
-                import sys
-
-                print(f"  [stitch] fetch_file_content failed: {file_path!r} → {exc}", file=sys.stderr)
+            except Exception:
                 continue
-
-        import sys
-
-        print(
-            f"  [stitch] classified: {classification.error_type.value} "
-            f"({classification.confidence:.0%}), "
-            f"affected_files={classification.affected_files}, "
-            f"fetched={list(file_contents.keys())}",
-            file=sys.stderr,
-        )
 
         fix_patch = await self.fixer.generate_fix(
             classification=classification,
             job_log=job_log,
             diff=diff,
             file_contents=file_contents,
-        )
-
-        print(
-            f"  [stitch] fix_patch: {[c.path for c in fix_patch.changes]}, "
-            f"file_contents_keys={list(file_contents.keys())}",
-            file=sys.stderr,
         )
 
         # Validate patch before pushing — reject destructive fixes

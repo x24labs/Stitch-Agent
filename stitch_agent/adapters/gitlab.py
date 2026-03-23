@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 import httpx
 
 from stitch_agent.adapters.base import CIPlatformAdapter
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 if TYPE_CHECKING:
     from stitch_agent.models import FixRequest
@@ -36,7 +39,7 @@ class GitLabAdapter(CIPlatformAdapter):
             f"{self._pid(request.project_id)}/jobs/{request.job_id}/trace"
         )
         resp.raise_for_status()
-        return resp.text
+        return _ANSI_RE.sub("", resp.text)
 
     async def fetch_diff(self, request: FixRequest) -> str:
         resp = await self._client.get(

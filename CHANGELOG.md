@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.10 — 2026-03-23
+
+### Fixed
+
+- **Classifier fails to extract file paths from GitLab logs** — ANSI escape codes in job traces (`\x1b[96msrc/file.ts\x1b[0m`) broke the file reference regex, causing `affected_files=[]` and empty `file_contents`. Now strips ANSI codes from job logs in `fetch_job_logs`.
+
 ## v0.1.8 — 2026-03-23
 
 ### Fixed
