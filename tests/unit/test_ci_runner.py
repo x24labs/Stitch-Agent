@@ -213,6 +213,7 @@ async def test_run_ci_verify_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CI_PROJECT_ID", "42")
     monkeypatch.setenv("CI_PIPELINE_ID", "500")
     monkeypatch.setenv("CI_COMMIT_REF_NAME", "stitch/fix-100")
+    monkeypatch.setenv("CI_COMMIT_MESSAGE", "fix(lint): remove unused import\n\nStitch-Target: main")
     monkeypatch.delenv("CI_JOB_STATUS", raising=False)
     monkeypatch.delenv("CI_SERVER_URL", raising=False)
     monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
@@ -221,9 +222,6 @@ async def test_run_ci_verify_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_adapter = AsyncMock()
     mock_adapter.__aenter__ = AsyncMock(return_value=mock_adapter)
     mock_adapter.__aexit__ = AsyncMock(return_value=False)
-    mock_adapter.get_latest_commit_message = AsyncMock(
-        return_value="fix(lint): remove unused import\n\nStitch-Target: main"
-    )
     mock_adapter.list_failed_jobs = AsyncMock(return_value=[])
     mock_adapter.create_merge_request = AsyncMock(
         return_value="https://gitlab.com/mr/99"
@@ -239,12 +237,75 @@ async def test_run_ci_verify_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     call_kwargs = mock_adapter.create_merge_request.call_args
     assert call_kwargs.kwargs["fix_branch"] == "stitch/fix-100"
     assert call_kwargs.kwargs["request"].branch == "main"
+    # Should NOT call API since CI_COMMIT_MESSAGE has the target
+    mock_adapter.get_latest_commit_message.assert_not_called()
+
+
+async def test_run_ci_verify_uses_api_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When CI_COMMIT_MESSAGE is absent, falls back to API call."""
+    monkeypatch.setenv("CI_PROJECT_ID", "42")
+    monkeypatch.setenv("CI_PIPELINE_ID", "500")
+    monkeypatch.setenv("CI_COMMIT_REF_NAME", "stitch/fix-100")
+    monkeypatch.delenv("CI_COMMIT_MESSAGE", raising=False)
+    monkeypatch.delenv("CI_JOB_STATUS", raising=False)
+    monkeypatch.delenv("CI_SERVER_URL", raising=False)
+    monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
+    monkeypatch.setenv("STITCH_ANTHROPIC_API_KEY", "fake-key")
+
+    mock_adapter = AsyncMock()
+    mock_adapter.__aenter__ = AsyncMock(return_value=mock_adapter)
+    mock_adapter.__aexit__ = AsyncMock(return_value=False)
+    mock_adapter.get_latest_commit_message = AsyncMock(
+        return_value="fix(lint): remove unused import\n\nStitch-Target: develop"
+    )
+    mock_adapter.list_failed_jobs = AsyncMock(return_value=[])
+    mock_adapter.create_merge_request = AsyncMock(
+        return_value="https://gitlab.com/mr/101"
+    )
+
+    with patch("stitch_agent.adapters.gitlab.GitLabAdapter", return_value=mock_adapter):
+        from runners.ci_runner import run_ci
+
+        exit_code = await run_ci(output_format="text", platform_override="gitlab")
+
+    assert exit_code == 0
+    mock_adapter.get_latest_commit_message.assert_called_once()
+    call_kwargs = mock_adapter.create_merge_request.call_args
+    assert call_kwargs.kwargs["request"].branch == "develop"
+
+
+async def test_run_ci_verify_api_fallback_404(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When both CI_COMMIT_MESSAGE and API fail, return error gracefully."""
+    monkeypatch.setenv("CI_PROJECT_ID", "42")
+    monkeypatch.setenv("CI_PIPELINE_ID", "500")
+    monkeypatch.setenv("CI_COMMIT_REF_NAME", "stitch/fix-100")
+    monkeypatch.delenv("CI_COMMIT_MESSAGE", raising=False)
+    monkeypatch.delenv("CI_JOB_STATUS", raising=False)
+    monkeypatch.delenv("CI_SERVER_URL", raising=False)
+    monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
+    monkeypatch.setenv("STITCH_ANTHROPIC_API_KEY", "fake-key")
+
+    mock_adapter = AsyncMock()
+    mock_adapter.__aenter__ = AsyncMock(return_value=mock_adapter)
+    mock_adapter.__aexit__ = AsyncMock(return_value=False)
+    mock_adapter.get_latest_commit_message = AsyncMock(
+        side_effect=Exception("404 Not Found")
+    )
+
+    with patch("stitch_agent.adapters.gitlab.GitLabAdapter", return_value=mock_adapter):
+        from runners.ci_runner import run_ci
+
+        exit_code = await run_ci(output_format="text", platform_override="gitlab")
+
+    assert exit_code == 1  # error: no target branch found
+    mock_adapter.create_merge_request.assert_not_called()
 
 
 async def test_run_ci_verify_mode_no_target(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CI_PROJECT_ID", "42")
     monkeypatch.setenv("CI_PIPELINE_ID", "500")
     monkeypatch.setenv("CI_COMMIT_REF_NAME", "stitch/fix-100")
+    monkeypatch.setenv("CI_COMMIT_MESSAGE", "fix(lint): remove unused import")
     monkeypatch.delenv("CI_JOB_STATUS", raising=False)
     monkeypatch.delenv("CI_SERVER_URL", raising=False)
     monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
@@ -270,6 +331,7 @@ async def test_run_ci_escalate_when_fix_fails(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("CI_PROJECT_ID", "42")
     monkeypatch.setenv("CI_PIPELINE_ID", "501")
     monkeypatch.setenv("CI_COMMIT_REF_NAME", "stitch/fix-100")
+    monkeypatch.setenv("CI_COMMIT_MESSAGE", "fix(lint): remove unused import\n\nStitch-Target: main")
     monkeypatch.delenv("CI_JOB_STATUS", raising=False)
     monkeypatch.delenv("CI_SERVER_URL", raising=False)
     monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
@@ -278,9 +340,6 @@ async def test_run_ci_escalate_when_fix_fails(monkeypatch: pytest.MonkeyPatch) -
     mock_adapter = AsyncMock()
     mock_adapter.__aenter__ = AsyncMock(return_value=mock_adapter)
     mock_adapter.__aexit__ = AsyncMock(return_value=False)
-    mock_adapter.get_latest_commit_message = AsyncMock(
-        return_value="fix(lint): remove unused import\n\nStitch-Target: main"
-    )
     mock_adapter.list_failed_jobs = AsyncMock(
         return_value=[{"id": "300", "name": "check", "status": "failed"}]
     )
