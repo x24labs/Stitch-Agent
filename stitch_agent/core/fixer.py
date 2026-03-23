@@ -74,8 +74,10 @@ class Fixer:
         job_log: str,
         diff: str,
         file_contents: dict[str, str] | None = None,
+        *,
+        model_override: str | None = None,
     ) -> FixPatch:
-        model = select_model(classification.error_type)
+        model = model_override or select_model(classification.error_type)
         prompt = _build_prompt(classification, job_log, diff, file_contents or {})
         client = self._get_client()
         message = await client.messages.create(

@@ -326,8 +326,8 @@ async def test_run_ci_verify_mode_no_target(monkeypatch: pytest.MonkeyPatch) -> 
     assert exit_code == 1
 
 
-async def test_run_ci_escalate_when_fix_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When CI fails on stitch/fix-* branch, escalate instead of creating MR."""
+async def test_run_ci_escalate_when_fix_exhausted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When max retry attempts exhausted on stitch/fix-* branch, escalate to human."""
     monkeypatch.setenv("CI_PROJECT_ID", "42")
     monkeypatch.setenv("CI_PIPELINE_ID", "501")
     monkeypatch.setenv("CI_COMMIT_REF_NAME", "stitch/fix-100")
@@ -343,6 +343,8 @@ async def test_run_ci_escalate_when_fix_fails(monkeypatch: pytest.MonkeyPatch) -
     mock_adapter.list_failed_jobs = AsyncMock(
         return_value=[{"id": "300", "name": "check", "status": "failed"}]
     )
+    # Simulate max attempts reached (3 commits = 3 attempts)
+    mock_adapter.count_branch_commits = AsyncMock(return_value=3)
 
     with patch("stitch_agent.adapters.gitlab.GitLabAdapter", return_value=mock_adapter):
         from runners.ci_runner import run_ci
@@ -351,6 +353,52 @@ async def test_run_ci_escalate_when_fix_fails(monkeypatch: pytest.MonkeyPatch) -
 
     assert exit_code == 1
     mock_adapter.create_merge_request.assert_not_called()
+
+
+async def test_run_ci_retry_when_fix_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When fix fails CI with attempts remaining, retry on the same branch."""
+    monkeypatch.setenv("CI_PROJECT_ID", "42")
+    monkeypatch.setenv("CI_PIPELINE_ID", "501")
+    monkeypatch.setenv("CI_COMMIT_REF_NAME", "stitch/fix-100")
+    monkeypatch.setenv("CI_COMMIT_MESSAGE", "fix(lint): remove unused import\n\nStitch-Target: main")
+    monkeypatch.delenv("CI_JOB_STATUS", raising=False)
+    monkeypatch.delenv("CI_SERVER_URL", raising=False)
+    monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
+    monkeypatch.setenv("STITCH_ANTHROPIC_API_KEY", "fake-key")
+
+    mock_adapter = AsyncMock()
+    mock_adapter.__aenter__ = AsyncMock(return_value=mock_adapter)
+    mock_adapter.__aexit__ = AsyncMock(return_value=False)
+    mock_adapter.list_failed_jobs = AsyncMock(
+        return_value=[{"id": "300", "name": "check", "status": "failed"}]
+    )
+    # Only 1 attempt so far — should retry
+    mock_adapter.count_branch_commits = AsyncMock(return_value=1)
+
+    from stitch_agent.models import ErrorType, FixResult
+
+    mock_fix_result = FixResult(
+        status="fixed",
+        error_type=ErrorType.SIMPLE_TYPE,
+        confidence=0.95,
+        reason="Fixed syntax error",
+        fix_branch="stitch/fix-100",
+    )
+
+    with (
+        patch("stitch_agent.adapters.gitlab.GitLabAdapter", return_value=mock_adapter),
+        patch("runners.ci_runner.StitchAgent") as MockAgent,
+    ):
+        mock_agent_instance = AsyncMock()
+        mock_agent_instance.retry_fix = AsyncMock(return_value=mock_fix_result)
+        MockAgent.return_value = mock_agent_instance
+
+        from runners.ci_runner import run_ci
+
+        exit_code = await run_ci(output_format="text", platform_override="gitlab")
+
+    assert exit_code == 0
+    mock_agent_instance.retry_fix.assert_called_once()
 
 
 async def test_run_ci_fix_mode_no_mr(monkeypatch: pytest.MonkeyPatch) -> None:

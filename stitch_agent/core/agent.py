@@ -13,6 +13,7 @@ from stitch_agent.history import HistoryStore, default_db_path
 from stitch_agent.models import (
     ESCALATION_TYPES,
     HAIKU_TYPES,
+    SONNET_MODEL,
     ErrorType,
     FixRequest,
     FixResult,
@@ -207,6 +208,93 @@ class StitchAgent:
 
             notifier = Notifier(config)
             await notifier.notify_escalation(request, result)
+
+    async def retry_fix(
+        self,
+        request: FixRequest,
+        fix_branch: str,
+        target_branch: str,
+        attempt: int,
+    ) -> FixResult:
+        """Retry a failed fix on an existing stitch/fix-* branch.
+
+        Escalates to a stronger model after initial attempts fail.
+        """
+        config = await self._load_repo_config(request)
+
+        # Model escalation: first attempts use classified model, later → Sonnet
+        model_override: str | None = None
+        if attempt >= 2:
+            model_override = SONNET_MODEL
+
+        job_log = await self.adapter.fetch_job_logs(request)
+        diff = await self.adapter.fetch_diff(request)
+        classification = await self.classifier.classify(job_log, diff)
+
+        file_contents: dict[str, str] = {}
+        for file_path in classification.affected_files:
+            try:
+                file_contents[file_path] = await self.adapter.fetch_file_content(
+                    request, file_path
+                )
+            except Exception:
+                continue
+
+        fix_patch = await self.fixer.generate_fix(
+            classification=classification,
+            job_log=job_log,
+            diff=diff,
+            file_contents=file_contents,
+            model_override=model_override,
+        )
+
+        # Validate patch
+        validator = PatchValidator(config.validation)
+        validation = validator.validate(fix_patch, file_contents)
+        if not validation.passed:
+            detail = "; ".join(
+                f"{v.check}: {v.detail}" for v in validation.violations[:5]
+            )
+            return self._escalate(
+                classification.error_type,
+                classification.confidence,
+                f"Retry patch rejected by validation: {detail}",
+                "patch_validation_failed",
+            )
+
+        if not fix_patch.changes:
+            return self._escalate(
+                classification.error_type,
+                classification.confidence,
+                "Retry fixer produced no file changes",
+                "no_changes",
+            )
+
+        changes = [{"path": c.path, "content": c.new_content} for c in fix_patch.changes]
+        commit_message = (
+            f"{fix_patch.commit_message}\n\n"
+            f"Stitch-Target: {target_branch}\n"
+            f"Stitch-Retry: {attempt}"
+        )
+
+        await self.adapter.push_to_branch(
+            project_id=request.project_id,
+            branch=fix_branch,
+            changes=changes,
+            commit_message=commit_message,
+        )
+
+        model_used = model_override or "auto"
+        return FixResult(
+            status="fixed",
+            error_type=classification.error_type,
+            confidence=classification.confidence,
+            reason=(
+                f"Retry #{attempt}: {fix_patch.explanation} "
+                f"(model: {model_used})"
+            ),
+            fix_branch=fix_branch,
+        )
 
     async def _load_repo_config(self, request: FixRequest) -> StitchConfig:
         raw = await self.adapter.get_repo_config(request)

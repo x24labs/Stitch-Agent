@@ -252,6 +252,61 @@ class GitHubAdapter(CIPlatformAdapter):
             return ""
         return commits[0].get("commit", {}).get("message", "")
 
+    async def push_to_branch(
+        self,
+        project_id: str,
+        branch: str,
+        changes: list[dict[str, str]],
+        commit_message: str,
+    ) -> None:
+        owner, repo = self._owner_repo(project_id)
+        ref_resp = await self._client.get(
+            f"/repos/{owner}/{repo}/git/ref/heads/{branch}"
+        )
+        ref_resp.raise_for_status()
+        base_sha = ref_resp.json()["object"]["sha"]
+
+        commit_resp = await self._client.get(
+            f"/repos/{owner}/{repo}/git/commits/{base_sha}"
+        )
+        commit_resp.raise_for_status()
+        base_tree_sha = commit_resp.json()["tree"]["sha"]
+
+        tree_items = [
+            {"path": c["path"], "mode": "100644", "type": "blob", "content": c["content"]}
+            for c in changes
+        ]
+        tree_resp = await self._client.post(
+            f"/repos/{owner}/{repo}/git/trees",
+            json={"base_tree": base_tree_sha, "tree": tree_items},
+        )
+        tree_resp.raise_for_status()
+
+        new_commit_resp = await self._client.post(
+            f"/repos/{owner}/{repo}/git/commits",
+            json={
+                "message": commit_message,
+                "tree": tree_resp.json()["sha"],
+                "parents": [base_sha],
+            },
+        )
+        new_commit_resp.raise_for_status()
+
+        await self._client.patch(
+            f"/repos/{owner}/{repo}/git/refs/heads/{branch}",
+            json={"sha": new_commit_resp.json()["sha"]},
+        )
+
+    async def count_branch_commits(
+        self, project_id: str, branch: str, target_branch: str
+    ) -> int:
+        owner, repo = self._owner_repo(project_id)
+        resp = await self._client.get(
+            f"/repos/{owner}/{repo}/compare/{target_branch}...{branch}"
+        )
+        resp.raise_for_status()
+        return resp.json().get("ahead_by", 0)
+
     async def aclose(self) -> None:
         await self._client.aclose()
 

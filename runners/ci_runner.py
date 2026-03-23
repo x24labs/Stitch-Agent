@@ -189,7 +189,8 @@ async def _run_stitch_branch_mode(
 
         if non_stitch_failures:
             return await _handle_fix_failed(
-                ctx, target_branch, non_stitch_failures, output_format
+                ctx, platform, adapter, settings,
+                target_branch, non_stitch_failures, output_format,
             )
 
         return await _handle_fix_verified(
@@ -253,34 +254,105 @@ async def _handle_fix_verified(
 
 async def _handle_fix_failed(
     ctx: CIContext,
+    platform: Literal["gitlab", "github"],
+    adapter,
+    settings: StitchSettings,
     target_branch: str,
     failed_jobs: list[dict],
     output_format: str,
 ) -> int:
-    """CI failed on fix branch — escalate, the fix didn't work."""
+    """CI failed on fix branch — retry automatically with model escalation.
+
+    Counts commits on the fix branch to track attempts. Escalates to
+    a stronger model after initial retries. Only escalates to human
+    review after all attempts are exhausted.
+    """
     job_names = [str(j.get("name", j.get("id", "?"))) for j in failed_jobs]
 
-    result = {
-        "status": "fix_failed",
-        "fix_branch": ctx.branch,
-        "target_branch": target_branch,
-        "failed_jobs": job_names,
-        "reason": (
-            f"Fix on {ctx.branch} did not pass CI. "
-            f"Failed jobs: {', '.join(job_names)}. "
-            f"The fix introduced new errors or did not resolve the original issue. "
-            f"Human review needed."
-        ),
-    }
+    attempt = await adapter.count_branch_commits(
+        ctx.project_id, ctx.branch, target_branch
+    )
+    max_retry = settings.max_attempts
+
+    if attempt >= max_retry:
+        result = {
+            "status": "fix_exhausted",
+            "fix_branch": ctx.branch,
+            "target_branch": target_branch,
+            "attempts": attempt,
+            "failed_jobs": job_names,
+            "reason": (
+                f"Exhausted {attempt} fix attempts on {ctx.branch}. "
+                f"Failed jobs: {', '.join(job_names)}. Human review needed."
+            ),
+        }
+        if output_format == "json":
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"\u274c [exhausted] {attempt} attempts on {ctx.branch}, human review needed")
+            print(f"   Target: {target_branch}")
+            print(f"   Failed jobs: {', '.join(job_names)}")
+        return 1
+
+    job = failed_jobs[0]
+    job_id = str(job.get("id", ""))
+    model_hint = "sonnet" if attempt >= 2 else "auto"
+
+    if output_format != "json":
+        print(
+            f"\U0001f504 [retry] Attempt {attempt + 1}/{max_retry} "
+            f"on {ctx.branch} (model: {model_hint})"
+        )
+        print(f"   Fixing: {job_names[0]}")
+
+    agent = StitchAgent(
+        adapter=adapter,
+        anthropic_api_key=settings.anthropic_api_key,
+        haiku_confidence_threshold=settings.haiku_confidence_threshold,
+        sonnet_confidence_threshold=settings.sonnet_confidence_threshold,
+        max_attempts=max_retry,
+    )
+
+    request = FixRequest(
+        platform=platform,
+        project_id=ctx.project_id,
+        pipeline_id=ctx.pipeline_id,
+        job_id=job_id,
+        branch=ctx.branch,
+        job_name=str(job.get("name", "")),
+    )
+
+    try:
+        fix_result = await agent.retry_fix(
+            request=request,
+            fix_branch=ctx.branch,
+            target_branch=target_branch,
+            attempt=attempt,
+        )
+    except Exception as exc:
+        if output_format == "json":
+            print(json.dumps({"status": "retry_error", "reason": str(exc)}, indent=2))
+        else:
+            print(f"\u274c [retry_error] {exc}")
+        return 1
+
+    if fix_result.status == "fixed":
+        if output_format == "json":
+            print(json.dumps({
+                "status": "retried",
+                "fix_branch": ctx.branch,
+                "attempt": attempt + 1,
+                "reason": fix_result.reason,
+            }, indent=2))
+        else:
+            print(f"\u2705 [retried] Pushed retry fix to {ctx.branch}")
+            print(f"   {fix_result.reason}")
+        return 0
 
     if output_format == "json":
-        print(json.dumps(result, indent=2))
+        print(json.dumps({"status": "retry_failed", "reason": fix_result.reason}, indent=2))
     else:
-        print(f"\u26a0\ufe0f [fix_failed] Fix on {ctx.branch} did not pass CI")
-        print(f"   Target: {target_branch}")
-        print(f"   Failed jobs: {', '.join(job_names)}")
-        print("   The fix introduced new errors. Human review needed.")
-
+        print(f"\u26a0\ufe0f [retry_failed] {fix_result.reason}")
     return 1
 
 

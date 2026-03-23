@@ -53,3 +53,17 @@ class CIPlatformAdapter(ABC):
     async def get_latest_commit_message(
         self, project_id: str, branch: str
     ) -> str: ...
+
+    @abstractmethod
+    async def push_to_branch(
+        self,
+        project_id: str,
+        branch: str,
+        changes: list[dict[str, str]],
+        commit_message: str,
+    ) -> None: ...
+
+    @abstractmethod
+    async def count_branch_commits(
+        self, project_id: str, branch: str, target_branch: str
+    ) -> int: ...

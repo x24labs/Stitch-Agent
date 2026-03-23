@@ -1,10 +1,17 @@
 # Changelog
 
-## v0.1.10 — 2026-03-23
+## v0.2.0 — 2026-03-23
+
+### Added
+
+- **Auto-repair with model escalation** — when a fix fails CI, stitch automatically retries on the same branch instead of escalating to human review. Tracks attempt count via branch commits. After initial retries, escalates to Sonnet model. Only escalates to human after all attempts exhausted.
+- `retry_fix` method on `StitchAgent` — generates and pushes fixes to an existing fix branch with model override support.
+- `push_to_branch` and `count_branch_commits` on adapters (GitLab + GitHub).
+- New CI runner statuses: `retried` (fix pushed), `fix_exhausted` (max attempts reached, human needed), `retry_error`, `retry_failed`.
 
 ### Fixed
 
-- **Classifier fails to extract file paths from GitLab logs** — ANSI escape codes in job traces (`\x1b[96msrc/file.ts\x1b[0m`) broke the file reference regex, causing `affected_files=[]` and empty `file_contents`. Now strips ANSI codes from job logs in `fetch_job_logs`.
+- **Classifier fails to extract file paths from GitLab logs** — ANSI escape codes in job traces broke the file reference regex. Now strips ANSI codes from job logs.
 
 ## v0.1.8 — 2026-03-23
 

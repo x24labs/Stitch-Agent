@@ -206,6 +206,37 @@ class GitLabAdapter(CIPlatformAdapter):
             for j in resp.json()
         ]
 
+    async def push_to_branch(
+        self,
+        project_id: str,
+        branch: str,
+        changes: list[dict[str, str]],
+        commit_message: str,
+    ) -> None:
+        actions = [
+            {"action": "update", "file_path": c["path"], "content": c["content"]}
+            for c in changes
+        ]
+        resp = await self._client.post(
+            f"{self._pid(project_id)}/repository/commits",
+            json={
+                "branch": branch,
+                "commit_message": commit_message,
+                "actions": actions,
+            },
+        )
+        resp.raise_for_status()
+
+    async def count_branch_commits(
+        self, project_id: str, branch: str, target_branch: str
+    ) -> int:
+        resp = await self._client.get(
+            f"{self._pid(project_id)}/repository/compare",
+            params={"from": target_branch, "to": branch},
+        )
+        resp.raise_for_status()
+        return len(resp.json().get("commits", []))
+
     async def get_latest_commit_message(self, project_id: str, branch: str) -> str:
         resp = await self._client.get(
             f"{self._pid(project_id)}/repository/commits",
