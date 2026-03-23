@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.8 — 2026-03-23
+
+### Fixed
+
+- **`fetch_file_content` 400/403 on self-hosted GitLab** — reverse proxies (Cloudflare, nginx) reject `%2F`-encoded slashes in GitLab files API paths. Now falls back to tree listing + blob endpoint when the primary API returns 400 or 403.
+
 ## v0.1.7 — 2026-03-23
 
 ### Added

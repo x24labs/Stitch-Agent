@@ -77,13 +77,50 @@ class GitLabAdapter(CIPlatformAdapter):
         return _format_diffs(dr.json())
 
     async def fetch_file_content(self, request: FixRequest, file_path: str) -> str:
+        # Primary: files API (works on gitlab.com)
         encoded = quote(file_path, safe="")
         resp = await self._client.get(
             f"{self._pid(request.project_id)}/repository/files/{encoded}/raw",
             params={"ref": request.branch},
         )
+        if resp.status_code == 200:
+            return resp.text
+
+        # 400/403 may be a reverse proxy blocking %2F — try blob fallback
+        if resp.status_code in (400, 403):
+            return await self._fetch_via_blob(request, file_path)
+
+        # 404 or other errors — raise normally
         resp.raise_for_status()
-        return resp.text
+        return resp.text  # unreachable, satisfies type checker
+
+    async def _fetch_via_blob(self, request: FixRequest, file_path: str) -> str:
+        """Fetch file content via tree listing + blob endpoint.
+
+        Works around reverse proxies (Cloudflare, nginx) that reject
+        percent-encoded slashes (%2F) in URL paths.
+        """
+        import posixpath
+
+        parent = posixpath.dirname(file_path)
+        name = posixpath.basename(file_path)
+        resp = await self._client.get(
+            f"{self._pid(request.project_id)}/repository/tree",
+            params={"path": parent, "ref": request.branch, "per_page": 100},
+        )
+        resp.raise_for_status()
+        blob_sha: str | None = None
+        for item in resp.json():
+            if item.get("name") == name and item.get("type") == "blob":
+                blob_sha = item["id"]
+                break
+        if blob_sha is None:
+            raise FileNotFoundError(f"File not found in tree: {file_path}")
+        blob_resp = await self._client.get(
+            f"{self._pid(request.project_id)}/repository/blobs/{blob_sha}/raw"
+        )
+        blob_resp.raise_for_status()
+        return blob_resp.text
 
     async def create_fix_branch(
         self,
