@@ -6,7 +6,9 @@ import pytest
 
 from stitch_agent.core.agent import StitchAgent
 from stitch_agent.core.fixer import FileChange, FixPatch
-from stitch_agent.models import ErrorType, FixRequest, FixResult
+from stitch_agent.models import ErrorType, FixRequest, FixResult, ValidationResult
+
+_VALIDATION_PASS = "stitch_agent.core.patch_validator.PatchValidator.validate"
 
 pytestmark = pytest.mark.asyncio
 
@@ -59,7 +61,10 @@ async def test_logic_error_attempts_fix() -> None:
     )
     mock_patch = FixPatch(changes=[FileChange(path="app.py", new_content="fixed")])
     agent = _agent(adapter)
-    with patch.object(agent.fixer, "generate_fix", new_callable=AsyncMock, return_value=mock_patch):
+    with (
+        patch.object(agent.fixer, "generate_fix", new_callable=AsyncMock, return_value=mock_patch),
+        patch(_VALIDATION_PASS, return_value=ValidationResult(passed=True)),
+    ):
         result = await agent.fix(_req())
     assert result.status == "fixed"
 
@@ -77,7 +82,8 @@ async def test_escalation_reason_code_no_changes() -> None:
     agent = _agent(adapter)
     agent.fixer = AsyncMock()
     agent.fixer.generate_fix = AsyncMock(return_value=FixPatch(changes=[]))
-    result = await agent.fix(_req())
+    with patch(_VALIDATION_PASS, return_value=ValidationResult(passed=True)):
+        result = await agent.fix(_req())
     assert result.status == "error"
     assert result.escalation_reason_code == "no_changes"
 
@@ -125,7 +131,8 @@ async def test_notify_not_called_on_success() -> None:
     )
     agent.fixer = AsyncMock()
     agent.fixer.generate_fix = AsyncMock(return_value=patch_val)
-    result = await agent.fix(_req())
+    with patch(_VALIDATION_PASS, return_value=ValidationResult(passed=True)):
+        result = await agent.fix(_req())
     assert result.status == "fixed"
     callback.assert_not_called()
 
@@ -144,5 +151,6 @@ async def test_sonnet_type_lower_threshold_passes() -> None:
     )
     agent.fixer = AsyncMock()
     agent.fixer.generate_fix = AsyncMock(return_value=patch_val)
-    result = await agent.fix(_req())
+    with patch(_VALIDATION_PASS, return_value=ValidationResult(passed=True)):
+        result = await agent.fix(_req())
     assert result.status in ("fixed", "escalate")

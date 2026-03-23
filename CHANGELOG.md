@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.7 — 2026-03-23
+
+### Added
+
+- **Patch validation gate** — programmatic validation of LLM-generated patches before pushing to fix branches. Rejects destructive fixes that rewrite entire files, change function signatures, remove exports, or add new dependencies. Escalates instead of pushing broken code.
+- `ValidationConfig` in `.stitch.yml` — configurable thresholds: `max_diff_ratio`, `max_files_changed`, `max_lines_changed`, `block_new_imports`, `block_signature_changes`, `block_export_removal`.
+- `PatchValidator` module with language-aware checks for Python, TypeScript, and JavaScript (diff ratio, export removal, signature preservation, new import detection, delete protection).
+- 15 new tests covering all validation checks including a real-world reproduction of the `config.ts` rewrite bug.
+
 ## v0.1.6 — 2026-03-23
 
 ### Fixed

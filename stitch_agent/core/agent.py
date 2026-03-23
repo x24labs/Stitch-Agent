@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from stitch_agent.config import parse_config
 from stitch_agent.core.classifier import Classifier
 from stitch_agent.core.fixer import Fixer
+from stitch_agent.core.patch_validator import PatchValidator
 from stitch_agent.core.pr_creator import PRCreator
 from stitch_agent.history import HistoryStore, default_db_path
 from stitch_agent.models import (
@@ -126,6 +127,22 @@ class StitchAgent:
             diff=diff,
             file_contents=file_contents,
         )
+
+        # Validate patch before pushing — reject destructive fixes
+        validator = PatchValidator(config.validation)
+        validation = validator.validate(fix_patch, file_contents)
+        if not validation.passed:
+            detail = "; ".join(
+                f"{v.check}: {v.detail}" for v in validation.violations[:5]
+            )
+            result = self._escalate(
+                classification.error_type,
+                classification.confidence,
+                f"Patch rejected by validation: {detail}",
+                "patch_validation_failed",
+            )
+            await self._notify(request, result, config)
+            return result
 
         if not fix_patch.changes:
             result = FixResult(

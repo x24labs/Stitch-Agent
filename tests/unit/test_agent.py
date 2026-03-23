@@ -6,7 +6,7 @@ import pytest
 
 from stitch_agent.core.agent import StitchAgent
 from stitch_agent.core.fixer import FileChange, FixPatch
-from stitch_agent.models import ErrorType, FixRequest, FixResult
+from stitch_agent.models import ErrorType, FixRequest, FixResult, ValidationResult
 
 
 def _make_request(**kwargs: str) -> FixRequest:
@@ -48,6 +48,8 @@ def _make_agent(adapter: AsyncMock, *, max_attempts: int = 3) -> StitchAgent:
     return agent
 
 
+_VALIDATION_PASS = "stitch_agent.core.patch_validator.PatchValidator.validate"
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -65,7 +67,10 @@ async def test_logic_error_attempts_fix_with_sonnet() -> None:
     )
     mock_patch = FixPatch(changes=[FileChange(path="app.py", new_content="fixed")])
     agent = _make_agent(adapter)
-    with patch.object(agent.fixer, "generate_fix", new_callable=AsyncMock, return_value=mock_patch):
+    with (
+        patch.object(agent.fixer, "generate_fix", new_callable=AsyncMock, return_value=mock_patch),
+        patch(_VALIDATION_PASS, return_value=ValidationResult(passed=True)),
+    ):
         result = await agent.fix(_make_request())
     assert result.status == "fixed"
     assert result.error_type == ErrorType.LOGIC_ERROR
@@ -94,7 +99,8 @@ async def test_successful_fix_flow() -> None:
     agent.fixer = AsyncMock()
     agent.fixer.generate_fix = AsyncMock(return_value=fix_patch)
 
-    result = await agent.fix(_make_request())
+    with patch(_VALIDATION_PASS, return_value=ValidationResult(passed=True)):
+        result = await agent.fix(_make_request())
 
     assert result.status == "fixed"
     assert result.mr_url == "https://gitlab.com/p/mr/1"
@@ -112,7 +118,8 @@ async def test_returns_error_when_no_changes() -> None:
     agent.fixer = AsyncMock()
     agent.fixer.generate_fix = AsyncMock(return_value=FixPatch(changes=[]))
 
-    result = await agent.fix(_make_request())
+    with patch(_VALIDATION_PASS, return_value=ValidationResult(passed=True)):
+        result = await agent.fix(_make_request())
     assert result.status == "error"
     assert "no file changes" in result.reason
 
@@ -120,7 +127,7 @@ async def test_returns_error_when_no_changes() -> None:
 async def test_loads_repo_config_if_present() -> None:
     adapter = _make_adapter(
         job_log="src/foo.py:1:1: F401 unused\nFound 1 error.\n",
-        repo_config="languages: [python]\nlinter: ruff\n",
+        repo_config="languages: [python]\nlinter: ruff\nvalidation:\n  enabled: false\n",
     )
     good_patch = FixPatch(
         changes=[FileChange(path="src/foo.py", new_content="x = 1\n")],
@@ -130,7 +137,10 @@ async def test_loads_repo_config_if_present() -> None:
     mock_fixer = AsyncMock()
     mock_fixer.generate_fix = AsyncMock(return_value=good_patch)
 
-    with patch("stitch_agent.core.agent.Fixer", return_value=mock_fixer):
+    with (
+        patch("stitch_agent.core.agent.Fixer", return_value=mock_fixer),
+        patch(_VALIDATION_PASS, return_value=ValidationResult(passed=True)),
+    ):
         agent = _make_agent(adapter)
         result = await agent.fix(_make_request())
 

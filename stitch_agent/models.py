@@ -100,6 +100,28 @@ class NotifyConfig(BaseModel):
         return any((self.webhook, self.slack, self.slack_webhook))
 
 
+class ValidationConfig(BaseModel):
+    enabled: bool = True
+    max_diff_ratio: float = Field(default=0.40, ge=0.0, le=1.0)
+    max_files_changed: int = Field(default=5, ge=1)
+    max_lines_changed: int = Field(default=200, ge=1)
+    block_new_imports: bool = True
+    block_signature_changes: bool = True
+    block_export_removal: bool = True
+
+
+class PatchViolation(BaseModel):
+    file_path: str
+    check: str
+    detail: str
+    severity: Literal["error", "warning"] = "error"
+
+
+class ValidationResult(BaseModel):
+    passed: bool
+    violations: list[PatchViolation] = Field(default_factory=list)
+
+
 class StitchConfig(BaseModel):
     languages: list[str] = Field(default_factory=list)
     linter: str | None = None
@@ -119,5 +141,6 @@ class StitchConfig(BaseModel):
     )
     escalate: list[str] = Field(default_factory=lambda: ["logic_errors", "breaking_changes"])
     notify: NotifyConfig = Field(default_factory=NotifyConfig)
+    validation: ValidationConfig = Field(default_factory=ValidationConfig)
     max_attempts: int = Field(default=3, ge=1, le=10)
     docker_image: str | None = None
