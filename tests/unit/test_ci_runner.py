@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from runners.ci_runner import build_context, detect_platform
+from runners.ci_runner import _is_stitch_branch, build_context, detect_platform
 
 pytestmark = pytest.mark.asyncio
 
@@ -190,3 +190,119 @@ async def test_run_ci_after_script_mode(monkeypatch: pytest.MonkeyPatch) -> None
     call_request = mock_agent.fix.call_args[0][0]
     assert call_request.job_id == "200"
     assert call_request.job_name == "lint"
+
+
+# --- _is_stitch_branch ---
+
+
+def test_is_stitch_branch_positive() -> None:
+    assert _is_stitch_branch("stitch/fix-100") is True
+    assert _is_stitch_branch("stitch/fix-abc") is True
+
+
+def test_is_stitch_branch_negative() -> None:
+    assert _is_stitch_branch("main") is False
+    assert _is_stitch_branch("feature/stitch/fix-100") is False
+    assert _is_stitch_branch("stitch-fix-100") is False
+
+
+# --- verify mode ---
+
+
+async def test_run_ci_verify_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CI_PROJECT_ID", "42")
+    monkeypatch.setenv("CI_PIPELINE_ID", "500")
+    monkeypatch.setenv("CI_COMMIT_REF_NAME", "stitch/fix-100")
+    monkeypatch.delenv("CI_JOB_STATUS", raising=False)
+    monkeypatch.delenv("CI_SERVER_URL", raising=False)
+    monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
+    monkeypatch.setenv("STITCH_ANTHROPIC_API_KEY", "fake-key")
+
+    mock_adapter = AsyncMock()
+    mock_adapter.__aenter__ = AsyncMock(return_value=mock_adapter)
+    mock_adapter.__aexit__ = AsyncMock(return_value=False)
+    mock_adapter.get_latest_commit_message = AsyncMock(
+        return_value="fix(lint): remove unused import\n\nStitch-Target: main"
+    )
+    mock_adapter.create_merge_request = AsyncMock(
+        return_value="https://gitlab.com/mr/99"
+    )
+
+    with patch("stitch_agent.adapters.gitlab.GitLabAdapter", return_value=mock_adapter):
+        from runners.ci_runner import run_ci
+
+        exit_code = await run_ci(output_format="text", platform_override="gitlab")
+
+    assert exit_code == 0
+    mock_adapter.create_merge_request.assert_called_once()
+    call_kwargs = mock_adapter.create_merge_request.call_args
+    assert call_kwargs.kwargs["fix_branch"] == "stitch/fix-100"
+    assert call_kwargs.kwargs["request"].branch == "main"
+
+
+async def test_run_ci_verify_mode_no_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CI_PROJECT_ID", "42")
+    monkeypatch.setenv("CI_PIPELINE_ID", "500")
+    monkeypatch.setenv("CI_COMMIT_REF_NAME", "stitch/fix-100")
+    monkeypatch.delenv("CI_JOB_STATUS", raising=False)
+    monkeypatch.delenv("CI_SERVER_URL", raising=False)
+    monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
+    monkeypatch.setenv("STITCH_ANTHROPIC_API_KEY", "fake-key")
+
+    mock_adapter = AsyncMock()
+    mock_adapter.__aenter__ = AsyncMock(return_value=mock_adapter)
+    mock_adapter.__aexit__ = AsyncMock(return_value=False)
+    mock_adapter.get_latest_commit_message = AsyncMock(
+        return_value="fix(lint): remove unused import"
+    )
+
+    with patch("stitch_agent.adapters.gitlab.GitLabAdapter", return_value=mock_adapter):
+        from runners.ci_runner import run_ci
+
+        exit_code = await run_ci(output_format="text", platform_override="gitlab")
+
+    assert exit_code == 1
+
+
+async def test_run_ci_fix_mode_no_mr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fix mode should call agent.fix with create_mr=False."""
+    monkeypatch.setenv("CI_PROJECT_ID", "42")
+    monkeypatch.setenv("CI_PIPELINE_ID", "100")
+    monkeypatch.setenv("CI_COMMIT_REF_NAME", "main")
+    monkeypatch.setenv("CI_JOB_STATUS", "failed")
+    monkeypatch.setenv("CI_JOB_ID", "200")
+    monkeypatch.setenv("CI_JOB_NAME", "lint")
+    monkeypatch.delenv("CI_SERVER_URL", raising=False)
+    monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
+    monkeypatch.setenv("STITCH_ANTHROPIC_API_KEY", "fake-key")
+
+    from stitch_agent.models import ErrorType, FixResult
+
+    mock_result = FixResult(
+        status="fixed",
+        error_type=ErrorType.LINT,
+        confidence=0.95,
+        reason="Fixed lint error",
+        fix_branch="stitch/fix-100",
+    )
+
+    mock_adapter = AsyncMock()
+    mock_adapter.__aenter__ = AsyncMock(return_value=mock_adapter)
+    mock_adapter.__aexit__ = AsyncMock(return_value=False)
+
+    mock_agent = AsyncMock()
+    mock_agent.fix = AsyncMock(return_value=mock_result)
+
+    with (
+        patch("stitch_agent.adapters.gitlab.GitLabAdapter", return_value=mock_adapter),
+        patch("runners.ci_runner.StitchAgent", return_value=mock_agent),
+    ):
+        from runners.ci_runner import run_ci
+
+        exit_code = await run_ci(output_format="text", platform_override="gitlab")
+
+    assert exit_code == 0
+    mock_agent.fix.assert_called_once()
+    # Verify create_mr=False is passed
+    call_kwargs = mock_agent.fix.call_args
+    assert call_kwargs.kwargs.get("create_mr") is False

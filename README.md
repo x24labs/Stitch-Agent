@@ -22,30 +22,43 @@
 ## How it works
 
 ```
-Failed pipeline ──> stitch ──> Merge/Pull Request with the fix
+Failed pipeline ──> stitch ──> fix branch ──> CI verifies ──> MR auto-created
 ```
 
 1. **Fetch** — downloads job logs and the diff that triggered the failure
 2. **Classify** — identifies the error type using 150+ patterns and confidence scoring
 3. **Fix** — Claude generates a minimal, conservative patch for affected files
-4. **Validate** — optionally runs the fix in a Docker sandbox before opening a PR (strict mode)
-5. **PR** — opens a Merge/Pull Request with a Conventional Commits message
+4. **Validate** — optionally runs the fix in a Docker sandbox (strict mode)
+5. **Branch** — pushes the fix to a `stitch/fix-*` branch
+6. **Verify** — CI runs on the fix branch to confirm the fix actually works
+7. **PR** — if CI passes, stitch opens a Merge/Pull Request automatically
+
+### Two-phase CI flow
+
+stitch uses a two-phase approach to ensure fixes are verified before creating PRs:
+
+| Phase | Trigger | What happens |
+|-------|---------|-------------|
+| **Fix** | CI fails on your branch | stitch generates a fix, pushes to `stitch/fix-*` branch (no MR yet) |
+| **Verify** | CI passes on `stitch/fix-*` | stitch creates the MR targeting your original branch |
+
+If CI fails on the fix branch, no MR is created — the fix didn't work, and stitch won't create noise.
 
 ## Supported error types
 
-| Type | Model used | Action |
-|------|-----------|--------|
-| `lint` | Haiku | auto-fix |
-| `format` | Haiku | auto-fix |
-| `simple_type` | Haiku | auto-fix |
-| `config_ci` | Haiku | auto-fix |
-| `build` | Haiku | auto-fix |
-| `complex_type` | Sonnet | auto-fix |
-| `test_contract` | Sonnet | auto-fix |
-| `logic_error` | — | escalate to human |
-| `unknown` | — | escalate to human |
+| Type | Model used |
+|------|-----------|
+| `lint` | Haiku |
+| `format` | Haiku |
+| `simple_type` | Haiku |
+| `config_ci` | Haiku |
+| `build` | Haiku |
+| `complex_type` | Sonnet |
+| `test_contract` | Sonnet |
+| `logic_error` | Sonnet |
+| `unknown` | Sonnet |
 
-Simple errors use the faster, cheaper Haiku model. Complex errors use Sonnet. Errors stitch can't safely fix are escalated with context so a human can resolve them quickly.
+All error types are attempted. Classification determines which model to use — simple errors use the faster, cheaper Haiku model; complex errors use Sonnet.
 
 ## Quick start
 
@@ -75,6 +88,8 @@ The fastest way to get stitch running — copy one YAML snippet into your CI con
 
 ```yaml
 # Option A: after_script (granular — each job reports its own failure)
+# Two jobs: stitch-fix (on failure) + stitch-verify (on success)
+
 .stitch-fix: &stitch-fix
   after_script:
     - pip install stitch-agent
@@ -87,14 +102,37 @@ my-lint-job:
   <<: *stitch-fix
   script:
     - ruff check .
+
+# Verify: runs on stitch/fix-* branches when CI passes → creates MR
+stitch-verify:
+  stage: .post
+  when: on_success
+  only:
+    refs:
+      - /^stitch\//
+  script:
+    - pip install stitch-agent
+    - stitch ci
 ```
 
 ```yaml
 # Option B: .post stage (catch-all — one job covers the whole pipeline)
-stitch-autofix:
+# Two jobs: stitch-fix (on failure) + stitch-verify (on success)
+
+stitch-fix:
   stage: .post
   when: on_failure
   except:
+    refs:
+      - /^stitch\//
+  script:
+    - pip install stitch-agent
+    - stitch ci
+
+stitch-verify:
+  stage: .post
+  when: on_success
+  only:
     refs:
       - /^stitch\//
   script:
@@ -116,8 +154,25 @@ permissions:
   pull-requests: write
 
 jobs:
+  # Phase 1: Fix — runs when CI fails on a non-stitch branch
   fix:
-    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      !startsWith(github.event.workflow_run.head_branch, 'stitch/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install "stitch-agent[github]"
+      - run: stitch ci
+        env:
+          STITCH_ANTHROPIC_API_KEY: ${{ secrets.STITCH_ANTHROPIC_API_KEY }}
+          STITCH_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Phase 2: Verify — runs when CI passes on a stitch/fix-* branch
+  verify:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'stitch/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -128,9 +183,11 @@ jobs:
           STITCH_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-That's it. When a pipeline fails, stitch reads the logs, generates a fix, and opens a PR.
+That's it. When a pipeline fails, stitch generates a fix and pushes it to a `stitch/fix-*` branch. CI runs on that branch, and if it passes, stitch creates the MR automatically.
 
-> **Loop prevention:** The `except: refs: [/^stitch\//]` rule (GitLab) and the workflow_run trigger (GitHub) ensure stitch never triggers itself. Additionally, the `max_attempts` setting (default 3) caps retries via the API.
+> **Two-phase flow:** The fix is verified by your CI before any MR is created. If the fix doesn't pass CI, no MR is opened — zero noise.
+
+> **Loop prevention:** The `except`/`only` rules (GitLab) and branch name conditions (GitHub) ensure stitch only fixes normal branches and only verifies fix branches. The `max_attempts` setting (default 3) caps retries via the API.
 
 > **GitHub note:** `workflow_run` events fire 1-5 minutes after the triggering workflow completes. This is a GitHub platform limitation, not a stitch delay.
 
@@ -140,8 +197,10 @@ That's it. When a pipeline fails, stitch reads the logs, generates a fix, and op
 |---|---|---|
 | **Granularity** | Per-job — each job reports its own failure | Per-pipeline — one catch-all job |
 | **`CI_JOB_ID`** | Points to the failed job itself | Points to the stitch job (needs API discovery) |
-| **Setup** | YAML anchor on each job | Single extra job |
+| **Setup** | YAML anchor on each job + shared verify job | Two extra jobs |
 | **Best for** | Repos where you want per-job fix PRs | Repos where you want a single fix PR per pipeline |
+
+Both options include the `stitch-verify` job that creates the MR after CI passes on the fix branch.
 
 ## CI-native mode
 
@@ -397,7 +456,7 @@ Run `stitch setup` to auto-generate this file, or copy `.stitch.example.yml` fro
 
 ### Trusted (default)
 
-Generates the fix and opens a PR immediately. Fast, no extra dependencies.
+Generates the fix and pushes to a fix branch. In CI mode, the MR is created after CI verifies the fix. In CLI mode (`stitch fix`), the MR is created immediately. Fast, no extra dependencies.
 
 ### Strict (requires Docker)
 

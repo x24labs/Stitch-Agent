@@ -71,13 +71,13 @@ class StitchAgent:
             escalation_reason_code=reason_code,
         )
 
-    async def fix(self, request: FixRequest) -> FixResult:
-        result = await self._do_fix(request)
+    async def fix(self, request: FixRequest, *, create_mr: bool = True) -> FixResult:
+        result = await self._do_fix(request, create_mr=create_mr)
         with contextlib.suppress(Exception):
             self._history.record(request, result)
         return result
 
-    async def _do_fix(self, request: FixRequest) -> FixResult:
+    async def _do_fix(self, request: FixRequest, *, create_mr: bool = True) -> FixResult:
         config = await self._load_repo_config(request)
 
         previous_attempts = await self.adapter.get_previous_fix_count(request)
@@ -157,19 +157,25 @@ class StitchAgent:
         fix_id = request.pipeline_id
         changes = [{"path": c.path, "content": c.new_content} for c in fix_patch.changes]
 
+        commit_message = (
+            f"{fix_patch.commit_message}\n\nStitch-Target: {request.branch}"
+        )
+
         fix_branch = await self.adapter.create_fix_branch(
             request=request,
             fix_id=fix_id,
             changes=changes,
-            commit_message=fix_patch.commit_message,
+            commit_message=commit_message,
         )
 
-        mr_url = await self.pr_creator.create(
-            request=request,
-            classification=classification,
-            fix_branch=fix_branch,
-            explanation=fix_patch.explanation,
-        )
+        mr_url: str | None = None
+        if create_mr:
+            mr_url = await self.pr_creator.create(
+                request=request,
+                classification=classification,
+                fix_branch=fix_branch,
+                explanation=fix_patch.explanation,
+            )
 
         result = FixResult(
             status="fixed",

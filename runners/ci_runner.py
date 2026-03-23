@@ -2,7 +2,11 @@
 
 Detects platform from environment variables and processes failed jobs automatically.
 
-GitLab modes:
+Two-phase flow:
+  1. FIX mode  — CI failed on a normal branch → generate fix, create stitch/fix-* branch (no MR)
+  2. VERIFY mode — CI passed on a stitch/fix-* branch → create MR
+
+GitLab modes (fix phase):
   - after_script: CI_JOB_STATUS present, job_id is the failed job itself
   - .post stage:  CI_JOB_STATUS absent, discovers failed jobs via API
 
@@ -14,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from typing import Literal
@@ -21,6 +26,9 @@ from typing import Literal
 from stitch_agent.core.agent import StitchAgent
 from stitch_agent.models import FixRequest
 from stitch_agent.settings import StitchSettings
+
+_STITCH_BRANCH_RE = re.compile(r"^stitch/fix-")
+_TARGET_RE = re.compile(r"^Stitch-Target:\s*(.+)$", re.M)
 
 
 @dataclass
@@ -33,6 +41,10 @@ class CIContext:
     # after_script mode: single job already known
     job_id: str | None = None
     job_name: str | None = None
+
+
+def _is_stitch_branch(branch: str) -> bool:
+    return bool(_STITCH_BRANCH_RE.match(branch))
 
 
 def detect_platform(override: str | None = None) -> Literal["gitlab", "github"]:
@@ -116,26 +128,100 @@ def build_context(platform: Literal["gitlab", "github"]) -> CIContext:
     return _build_github_context()
 
 
-async def run_ci(
-    output_format: str = "text",
-    platform_override: str | None = None,
-    max_jobs: int = 5,
-) -> int:
-    platform = detect_platform(platform_override)
-    ctx = build_context(platform)
-    settings = StitchSettings()
-
-    # Build adapter
+def _build_adapter(platform: Literal["gitlab", "github"], ctx: CIContext, settings: StitchSettings):
     if platform == "gitlab":
         from stitch_agent.adapters.gitlab import GitLabAdapter
 
         base_url = ctx.base_url or settings.gitlab_base_url
-        adapter = GitLabAdapter(token=settings.gitlab_token, base_url=base_url)
-    else:
-        from stitch_agent.adapters.github import GitHubAdapter
+        return GitLabAdapter(token=settings.gitlab_token, base_url=base_url)
 
-        base_url = ctx.base_url or settings.github_base_url
-        adapter = GitHubAdapter(token=settings.github_token, base_url=base_url)
+    from stitch_agent.adapters.github import GitHubAdapter
+
+    base_url = ctx.base_url or settings.github_base_url
+    return GitHubAdapter(token=settings.github_token, base_url=base_url)
+
+
+async def _run_verify_mode(
+    ctx: CIContext,
+    platform: Literal["gitlab", "github"],
+    settings: StitchSettings,
+    output_format: str,
+) -> int:
+    """CI passed on a stitch/fix-* branch — extract target branch and create MR."""
+    adapter = _build_adapter(platform, ctx, settings)
+
+    async with adapter:
+        commit_msg = await adapter.get_latest_commit_message(ctx.project_id, ctx.branch)
+        target_match = _TARGET_RE.search(commit_msg)
+        if not target_match:
+            msg = (
+                f"Cannot determine target branch from commit on {ctx.branch}. "
+                f"Expected 'Stitch-Target: <branch>' trailer in commit message."
+            )
+            if output_format == "json":
+                print(json.dumps({"status": "error", "reason": msg}))
+            else:
+                print(f"\u274c {msg}", file=sys.stderr)
+            return 1
+
+        target_branch = target_match.group(1).strip()
+
+        # Build MR description from commit message
+        first_line = commit_msg.split("\n", 1)[0]
+        title = f"stitch: {first_line}" if not first_line.startswith("stitch:") else first_line
+        description = (
+            f"## Automated fix by stitch\n\n"
+            f"**Fix branch:** `{ctx.branch}`\n"
+            f"**Target branch:** `{target_branch}`\n\n"
+            f"### Commit message\n```\n{commit_msg.strip()}\n```\n\n"
+            f"CI passed on the fix branch — this fix has been verified.\n\n"
+            f"---\n"
+            f"*This MR was created automatically by "
+            f"[stitch-agent](https://github.com/g24r/stitch).*"
+        )
+
+        # Create a FixRequest pointing to the target branch
+        request = FixRequest(
+            platform=platform,
+            project_id=ctx.project_id,
+            pipeline_id=ctx.pipeline_id,
+            job_id="0",
+            branch=target_branch,
+        )
+
+        mr_url = await adapter.create_merge_request(
+            request=request,
+            fix_branch=ctx.branch,
+            title=title,
+            description=description,
+        )
+
+    result = {
+        "status": "verified",
+        "fix_branch": ctx.branch,
+        "target_branch": target_branch,
+        "mr_url": mr_url,
+    }
+
+    if output_format == "json":
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"\u2705 [verify] CI passed on {ctx.branch}")
+        print(f"   Target: {target_branch}")
+        print(f"   MR URL: {mr_url}")
+
+    return 0
+
+
+async def _run_fix_mode(
+    ctx: CIContext,
+    platform: Literal["gitlab", "github"],
+    settings: StitchSettings,
+    output_format: str,
+    max_jobs: int,
+) -> int:
+    """CI failed on a normal branch — generate fix and create stitch/fix-* branch (no MR)."""
+    adapter = _build_adapter(platform, ctx, settings)
 
     agent = StitchAgent(
         adapter=adapter,
@@ -146,16 +232,13 @@ async def run_ci(
         max_attempts=settings.max_attempts,
     )
 
-    # Determine which jobs to fix and process them in a single adapter session
     jobs_to_fix: list[dict[str, str]] = []
     results: list[dict[str, object]] = []
 
     async with adapter:
         if ctx.job_id:
-            # after_script mode — single known job
             jobs_to_fix = [{"id": ctx.job_id, "name": ctx.job_name or ""}]
         else:
-            # .post stage or GitHub — discover failed jobs
             discovered = await adapter.list_failed_jobs(ctx.project_id, ctx.pipeline_id)
             jobs_to_fix = [{"id": str(j["id"]), "name": str(j.get("name", ""))} for j in discovered]
 
@@ -166,7 +249,6 @@ async def run_ci(
                 print("No failed jobs found in pipeline.")
             return 0
 
-        # Limit jobs to prevent rate-limit issues
         if len(jobs_to_fix) > max_jobs:
             print(
                 f"Found {len(jobs_to_fix)} failed jobs, processing first {max_jobs} "
@@ -175,7 +257,6 @@ async def run_ci(
             )
             jobs_to_fix = jobs_to_fix[:max_jobs]
 
-        # Process each failed job
         for job in jobs_to_fix:
             request = FixRequest(
                 platform=platform,
@@ -186,7 +267,7 @@ async def run_ci(
                 job_name=job["name"] or None,
             )
             try:
-                result = await agent.fix(request)
+                result = await agent.fix(request, create_mr=False)
                 results.append({"job_id": job["id"], "job_name": job["name"], **result.model_dump()})
             except Exception as exc:
                 results.append({
@@ -196,14 +277,27 @@ async def run_ci(
                     "reason": str(exc),
                 })
 
-    # Output
     if output_format == "json":
         print(json.dumps({"status": "complete", "jobs": results}, indent=2))
     else:
         _print_text_results(results)
 
-    # Exit 0 only if all jobs were fixed
     return 0 if all(r.get("status") == "fixed" for r in results) else 1
+
+
+async def run_ci(
+    output_format: str = "text",
+    platform_override: str | None = None,
+    max_jobs: int = 5,
+) -> int:
+    platform = detect_platform(platform_override)
+    ctx = build_context(platform)
+    settings = StitchSettings()
+
+    if _is_stitch_branch(ctx.branch):
+        return await _run_verify_mode(ctx, platform, settings, output_format)
+
+    return await _run_fix_mode(ctx, platform, settings, output_format, max_jobs)
 
 
 def _print_text_results(results: list[dict[str, object]]) -> None:
@@ -215,5 +309,7 @@ def _print_text_results(results: list[dict[str, object]]) -> None:
         print(f"{icon} [{job_label}] {status}")
         if r.get("reason"):
             print(f"   Reason: {r['reason']}")
+        if r.get("fix_branch"):
+            print(f"   Branch: {r['fix_branch']}")
         if r.get("mr_url"):
             print(f"   MR URL: {r['mr_url']}")

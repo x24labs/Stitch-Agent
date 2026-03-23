@@ -48,3 +48,8 @@ class CIPlatformAdapter(ABC):
     async def list_failed_jobs(
         self, project_id: str, pipeline_id: str
     ) -> list[dict[str, str | int]]: ...
+
+    @abstractmethod
+    async def get_latest_commit_message(
+        self, project_id: str, branch: str
+    ) -> str: ...
