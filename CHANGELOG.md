@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.1.3 — 2026-03-23
+
+### Changed
+
+- Classification now routes all error types to a fix attempt — no more auto-escalation
+- `ESCALATION_TYPES` emptied; `LOGIC_ERROR` and `UNKNOWN` moved to `SONNET_TYPES`
+
+### Fixed
+
+- TypeScript error pattern now matches `ts(2365)` format (case-insensitive, optional parens)
+
 ## v0.1.2 — 2026-03-22
 
 ### Fixed
