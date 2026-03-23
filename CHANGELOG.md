@@ -14,6 +14,9 @@
 
 - README rewritten: focused on CI-native approach, removed all webhook/server documentation
 - Architecture diagram updated to reflect simplified codebase
+- `stitch-check` replaces separate `stitch-verify`/`stitch-retry` jobs — single job with `when: always`
+- On stitch/fix-* branches, auto-detects verify vs escalate by checking for failed jobs in pipeline
+- When fix doesn't pass CI, escalates with clear message instead of silent failure
 
 ## v0.1.4 — 2026-03-23
 

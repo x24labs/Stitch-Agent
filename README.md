@@ -100,10 +100,10 @@ my-lint-job:
   script:
     - ruff check .
 
-# Verify: runs on stitch/fix-* branches when CI passes → creates MR
-stitch-verify:
+# Runs on stitch/fix-* branches: verify (CI passed → MR) or escalate (CI failed)
+stitch-check:
   stage: .post
-  when: on_success
+  when: always
   only:
     refs:
       - /^stitch\//
@@ -125,9 +125,9 @@ stitch-fix:
     - pip install stitch-agent
     - stitch ci
 
-stitch-verify:
+stitch-check:
   stage: .post
-  when: on_success
+  when: always
   only:
     refs:
       - /^stitch\//
@@ -150,7 +150,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  # Phase 1: Fix — runs when CI fails on a non-stitch branch
+  # Fix: CI failed on a non-stitch branch → generate fix
   fix:
     if: >-
       github.event.workflow_run.conclusion == 'failure' &&
@@ -164,11 +164,9 @@ jobs:
           STITCH_ANTHROPIC_API_KEY: ${{ secrets.STITCH_ANTHROPIC_API_KEY }}
           STITCH_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Phase 2: Verify — runs when CI passes on a stitch/fix-* branch
-  verify:
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      startsWith(github.event.workflow_run.head_branch, 'stitch/')
+  # Check: stitch/fix-* branch completed → verify (create MR) or escalate
+  check:
+    if: startsWith(github.event.workflow_run.head_branch, 'stitch/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -179,11 +177,11 @@ jobs:
           STITCH_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-That's it. When a pipeline fails, stitch generates a fix and pushes it to a `stitch/fix-*` branch. CI runs on that branch, and if it passes, stitch creates the MR automatically.
+That's it. When a pipeline fails, stitch generates a fix and pushes it to a `stitch/fix-*` branch. CI runs on that branch, and:
+- **CI passes** → stitch creates the MR automatically
+- **CI fails** → stitch escalates (the fix didn't work, human review needed)
 
-> **Two-phase flow:** The fix is verified by your CI before any MR is created. If the fix doesn't pass CI, no MR is opened — zero noise.
-
-> **Loop prevention:** The `except`/`only` rules (GitLab) and branch name conditions (GitHub) ensure stitch only fixes normal branches and only verifies fix branches. The `max_attempts` setting (default 3) caps retries via the API.
+> **Loop prevention:** The `except`/`only` rules (GitLab) and branch name conditions (GitHub) ensure stitch only fixes normal branches. The `stitch-check` job auto-detects whether to verify or escalate by checking for failed jobs in the pipeline. The `max_attempts` setting (default 3) caps retries via the API.
 
 > **GitHub note:** `workflow_run` events fire 1-5 minutes after the triggering workflow completes. This is a GitHub platform limitation, not a stitch delay.
 
@@ -193,10 +191,10 @@ That's it. When a pipeline fails, stitch generates a fix and pushes it to a `sti
 |---|---|---|
 | **Granularity** | Per-job — each job reports its own failure | Per-pipeline — one catch-all job |
 | **`CI_JOB_ID`** | Points to the failed job itself | Points to the stitch job (needs API discovery) |
-| **Setup** | YAML anchor on each job + shared verify job | Two extra jobs |
+| **Setup** | YAML anchor on each job + shared check job | Two extra jobs |
 | **Best for** | Repos where you want per-job fix PRs | Repos where you want a single fix PR per pipeline |
 
-Both options include the `stitch-verify` job that creates the MR after CI passes on the fix branch.
+Both options include the `stitch-check` job that auto-detects whether to verify or escalate on fix branches.
 
 ## CI-native mode
 
@@ -220,7 +218,9 @@ GitLab mode is further refined by `CI_JOB_STATUS`:
 - Present and `"failed"` → `after_script` mode (single job, no API discovery)
 - Absent → `.post` stage mode (discovers failed jobs via API)
 
-On `stitch/fix-*` branches, `stitch ci` automatically switches to **verify mode** — reads the target branch from the commit metadata and creates the MR.
+On `stitch/fix-*` branches, `stitch ci` auto-detects the right action:
+- **No failed jobs** → verify mode (creates MR)
+- **Failed jobs** → escalate mode (reports fix didn't work)
 
 ## Alternative: CLI
 
