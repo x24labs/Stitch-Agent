@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.6 — 2026-03-23
+
+### Fixed
+
+- **stitch-check 404 on self-hosted GitLab** — `get_latest_commit_message` API call failed on instances where the token lacked `read_repository` scope. Now reads `CI_COMMIT_MESSAGE` env var first (always available in GitLab CI), falls back to API only when needed.
+- API fallback errors are suppressed gracefully — no more unhandled 404 crashes in verify/escalate mode.
+- **Non-conservative fixes breaking callers** — hardened fixer prompt with explicit constraints: never change function signatures, type definitions, exports, or unrelated lines. If a fix requires signature changes, the LLM now returns an empty patch (escalates) instead of introducing new errors.
+
+### Added
+
+- `commit_message` field on `CIContext` dataclass — carries commit message from CI environment.
+- Three new tests: env var path, API fallback, and 404 resilience.
+
 ## v0.1.5 — 2026-03-23
 
 ### Removed

@@ -17,6 +17,7 @@ GitHub:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -42,6 +43,8 @@ class CIContext:
     # after_script mode: single job already known
     job_id: str | None = None
     job_name: str | None = None
+    # commit message from CI env (avoids API call)
+    commit_message: str | None = None
 
 
 def _is_stitch_branch(branch: str) -> bool:
@@ -69,6 +72,7 @@ def _build_gitlab_context() -> CIContext:
     pipeline_id = os.environ.get("CI_PIPELINE_ID", "")
     branch = os.environ.get("CI_COMMIT_REF_NAME", "")
     base_url = os.environ.get("CI_SERVER_URL")
+    commit_message = os.environ.get("CI_COMMIT_MESSAGE")
 
     job_status = os.environ.get("CI_JOB_STATUS")
     if job_status == "failed":
@@ -81,6 +85,7 @@ def _build_gitlab_context() -> CIContext:
             base_url=f"{base_url}" if base_url else None,
             job_id=os.environ.get("CI_JOB_ID"),
             job_name=os.environ.get("CI_JOB_NAME"),
+            commit_message=commit_message,
         )
 
     # .post stage mode: need to discover failed jobs
@@ -90,6 +95,7 @@ def _build_gitlab_context() -> CIContext:
         pipeline_id=pipeline_id,
         branch=branch,
         base_url=f"{base_url}" if base_url else None,
+        commit_message=commit_message,
     )
 
 
@@ -157,8 +163,11 @@ async def _run_stitch_branch_mode(
     adapter = _build_adapter(platform, ctx, settings)
 
     async with adapter:
-        # Get target branch from commit metadata
-        commit_msg = await adapter.get_latest_commit_message(ctx.project_id, ctx.branch)
+        # Get target branch from commit metadata (prefer CI env var, fall back to API)
+        commit_msg = ctx.commit_message or ""
+        if not _extract_target_branch(commit_msg):
+            with contextlib.suppress(Exception):
+                commit_msg = await adapter.get_latest_commit_message(ctx.project_id, ctx.branch)
         target_branch = _extract_target_branch(commit_msg)
         if not target_branch:
             msg = (
