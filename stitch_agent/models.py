@@ -32,15 +32,12 @@ SONNET_TYPES: frozenset[ErrorType] = frozenset(
     {
         ErrorType.COMPLEX_TYPE,
         ErrorType.TEST_CONTRACT,
-    }
-)
-
-ESCALATION_TYPES: frozenset[ErrorType] = frozenset(
-    {
         ErrorType.LOGIC_ERROR,
         ErrorType.UNKNOWN,
     }
 )
+
+ESCALATION_TYPES: frozenset[ErrorType] = frozenset()
 
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 SONNET_MODEL = "claude-sonnet-4-6"

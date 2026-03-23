@@ -33,7 +33,7 @@ _RULES: dict[ErrorType, list[tuple[re.Pattern[str], float]]] = {
         (re.compile(r"is not assignable to (type|parameter)", re.I), 1.0),
         (re.compile(r"Cannot find name '", re.I), 0.9),
         (re.compile(r"has no attribute '[\w]+'", re.I), 0.8),
-        (re.compile(r"\bTS\d{4}\b"), 0.9),
+        (re.compile(r"\bTS\(?\d{4}\)?\b", re.IGNORECASE), 0.9),
         (re.compile(r"error\[E0\d{3}\]"), 0.8),
         (re.compile(r"mypy.*: error|pyright.*: error", re.I), 0.6),
     ],

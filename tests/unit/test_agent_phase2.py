@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -53,14 +53,15 @@ async def test_escalation_reason_code_max_attempts() -> None:
     assert result.escalation_reason_code == "max_attempts_reached"
 
 
-async def test_escalation_reason_code_escalation_type() -> None:
+async def test_logic_error_attempts_fix() -> None:
     adapter = _mock_adapter(
         job_log="Traceback (most recent call last):\n  File 'app.py'\nValueError: bad\n"
     )
+    mock_patch = FixPatch(changes=[FileChange(path="app.py", new_content="fixed")])
     agent = _agent(adapter)
-    result = await agent.fix(_req())
-    assert result.status == "escalate"
-    assert result.escalation_reason_code == "escalation_type"
+    with patch.object(agent.fixer, "generate_fix", new_callable=AsyncMock, return_value=mock_patch):
+        result = await agent.fix(_req())
+    assert result.status == "fixed"
 
 
 async def test_escalation_reason_code_low_confidence() -> None:
