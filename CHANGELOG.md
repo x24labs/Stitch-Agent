@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.1.4 — 2026-03-23
+
+### Added
+
+- **Two-phase CI flow** — fixes are verified by CI before creating MRs
+  - Phase 1 (fix): generate fix → push to `stitch/fix-*` branch (no MR)
+  - Phase 2 (verify): CI passes on fix branch → create MR automatically
+- `Stitch-Target` commit trailer for tracking target branch across phases
+- `get_latest_commit_message()` method on adapters (GitLab + GitHub)
+- `stitch-verify` CI job template for both GitLab and GitHub
+
+### Changed
+
+- `stitch ci` auto-detects verify mode when running on a `stitch/fix-*` branch
+- `agent.fix()` accepts `create_mr` parameter (default `True`, CI sets `False`)
+- Updated CI templates: two jobs (fix + verify) instead of one
+- Documentation rewritten to reflect two-phase flow
+
 ## v0.1.3 — 2026-03-23
 
 ### Changed

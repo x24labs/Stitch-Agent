@@ -166,6 +166,17 @@ class GitLabAdapter(CIPlatformAdapter):
             for j in resp.json()
         ]
 
+    async def get_latest_commit_message(self, project_id: str, branch: str) -> str:
+        resp = await self._client.get(
+            f"{self._pid(project_id)}/repository/commits",
+            params={"ref_name": branch, "per_page": 1},
+        )
+        resp.raise_for_status()
+        commits = resp.json()
+        if not commits:
+            return ""
+        return commits[0].get("message", "")
+
     async def aclose(self) -> None:
         await self._client.aclose()
 

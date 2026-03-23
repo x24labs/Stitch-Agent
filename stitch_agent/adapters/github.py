@@ -240,6 +240,18 @@ class GitHubAdapter(CIPlatformAdapter):
         scheme, rest = clone_url.split("://", 1)
         return f"{scheme}://x-access-token:{self.token}@{rest}"
 
+    async def get_latest_commit_message(self, project_id: str, branch: str) -> str:
+        owner, repo = self._owner_repo(project_id)
+        resp = await self._client.get(
+            f"/repos/{owner}/{repo}/commits",
+            params={"sha": branch, "per_page": 1},
+        )
+        resp.raise_for_status()
+        commits = resp.json()
+        if not commits:
+            return ""
+        return commits[0].get("commit", {}).get("message", "")
+
     async def aclose(self) -> None:
         await self._client.aclose()
 
