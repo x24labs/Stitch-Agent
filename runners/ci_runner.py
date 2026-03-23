@@ -228,7 +228,6 @@ async def _run_fix_mode(
         anthropic_api_key=settings.anthropic_api_key,
         haiku_confidence_threshold=settings.haiku_confidence_threshold,
         sonnet_confidence_threshold=settings.sonnet_confidence_threshold,
-        validation_mode=settings.validation_mode,
         max_attempts=settings.max_attempts,
     )
 

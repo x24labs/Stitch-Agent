@@ -188,24 +188,12 @@ def _check_provider_token(platform: str, settings: StitchSettings) -> CheckResul
 
 
 def _check_validation_runtime(settings: StitchSettings) -> CheckResult:
-    if settings.validation_mode != "strict":
-        return CheckResult(
-            id="validation.mode",
-            status="pass",
-            severity="info",
-            message=f"Validation mode is {settings.validation_mode}",
-        )
-
-    try:
-        import docker  # noqa: F401
-    except ImportError:
-        return CheckResult(
-            id="validation.mode",
-            status="fail",
-            severity="error",
-            message="Strict mode requires docker python package",
-            remediation="Install Docker SDK (`pip install docker`) or switch STITCH_VALIDATION_MODE=trusted",
-        )
+    return CheckResult(
+        id="validation.mode",
+        status="pass",
+        severity="info",
+        message="Fixes are verified by CI pipeline",
+    )
 
     return CheckResult(
         id="validation.mode",
