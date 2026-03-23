@@ -270,7 +270,7 @@ async def _handle_fix_failed(
         print(f"\u26a0\ufe0f [fix_failed] Fix on {ctx.branch} did not pass CI")
         print(f"   Target: {target_branch}")
         print(f"   Failed jobs: {', '.join(job_names)}")
-        print(f"   The fix introduced new errors. Human review needed.")
+        print("   The fix introduced new errors. Human review needed.")
 
     return 1
 
