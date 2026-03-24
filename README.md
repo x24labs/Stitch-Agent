@@ -3,7 +3,7 @@
   <p align="center"><strong>The AI that stitches your CI back together.</strong></p>
   <p align="center">
     Open-source AI agent that autonomously detects, diagnoses, and fixes CI pipeline failures.<br/>
-    Platform-agnostic. Zero config. Lives inside your CI — no servers required.
+    Drop two jobs into your CI config. That's it. No servers, no setup, no babysitting.
   </p>
 </p>
 
@@ -15,74 +15,45 @@
 
 ---
 
-**Your CI pipeline just failed.** Again. A missing import. A linting rule. A type error in the code you didn't even touch. You context-switch, open the logs, squint at the error, make a one-line fix, push, wait. Rinse, repeat.
+**Your CI pipeline just failed.** Again. A missing import. A linting rule. A type error in code you didn't even touch. You context-switch, open the logs, squint at the error, make a one-line fix, push, wait. Rinse, repeat.
 
-**stitch fixes that for you.** Add two jobs to your CI config and stitch will read the logs, classify the error, generate a fix, verify it passes CI, and open a PR — all automatically.
-
-## How it works
+**stitch fixes that in seconds.** It reads the logs, classifies the error, generates a minimal patch, verifies it passes CI, and opens a PR — fully autonomously, with zero human intervention.
 
 ```
-Failed pipeline ──> stitch ──> fix branch ──> CI verifies ──> MR auto-created
+Failed pipeline ──> stitch ──> fix branch ──> CI verifies ──> PR auto-created
 ```
 
-1. **Fetch** — downloads job logs and the diff that triggered the failure
-2. **Classify** — identifies the error type using 150+ patterns and confidence scoring
-3. **Fix** — Claude generates a minimal, conservative patch for affected files
-4. **Branch** — pushes the fix to a `stitch/fix-*` branch
-5. **Verify** — CI runs on the fix branch to confirm the fix actually works
-6. **PR** — if CI passes, stitch opens a Merge/Pull Request automatically
+## Why stitch?
 
-### CI flow
-
-stitch uses a multi-phase approach with automatic retries:
-
-| Phase | Trigger | What happens |
-|-------|---------|-------------|
-| **Fix** | CI fails on your branch | stitch generates a fix, pushes to `stitch/fix-*` branch (no MR yet) |
-| **Retry** | CI fails on `stitch/fix-*` | stitch retries on the same branch, escalating to Sonnet after 2 attempts |
-| **Verify** | CI passes on `stitch/fix-*` | stitch creates the MR targeting your original branch |
-| **Exhaust** | Max retries reached | stitch escalates to human review |
-
-## Supported error types
-
-| Type | Model used |
-|------|-----------|
-| `lint` | Haiku |
-| `format` | Haiku |
-| `simple_type` | Haiku |
-| `config_ci` | Haiku |
-| `build` | Haiku |
-| `complex_type` | Sonnet |
-| `test_contract` | Sonnet |
-| `logic_error` | Sonnet |
-| `unknown` | Sonnet |
-
-All error types are attempted. Classification determines which model to use — simple errors use the faster, cheaper Haiku model; complex errors use Sonnet.
+- **Zero infrastructure** — runs as a CI job, not a separate service. Nothing to deploy or maintain.
+- **Self-healing** — if the first fix doesn't pass CI, stitch retries with model escalation. Only escalates to humans after exhausting all attempts.
+- **Safe by design** — every patch goes through programmatic validation before pushing: diff ratio limits, signature preservation, export protection, import guards. The LLM can't rewrite your codebase.
+- **Cost-aware** — simple errors (lint, format, types) use the fast, cheap Haiku model. Complex errors escalate to Sonnet. You only pay for what you need.
+- **Platform-agnostic** — GitLab and GitHub, including self-hosted instances.
 
 ## Quick start
 
-### Install
+### 1. Install
 
 ```bash
 pip install stitch-agent
 ```
 
-Requires **Python 3.12+**.
+Requires Python 3.12+.
 
-### Set credentials
+### 2. Set credentials
 
-Add these as CI/CD variables in your project:
+Add these as CI/CD variables (Settings > CI/CD > Variables):
 
 ```bash
 STITCH_ANTHROPIC_API_KEY=sk-ant-...
-STITCH_GITLAB_TOKEN=glpat-...      # or STITCH_GITHUB_TOKEN=ghp_...
+STITCH_GITLAB_TOKEN=glpat-...      # or STITCH_GITHUB_TOKEN for GitHub
 ```
 
-### Add to your CI (30 seconds)
+### 3. Add to your CI
 
-Copy one YAML snippet into your CI config. No server to deploy.
-
-**GitLab CI** — add to `.gitlab-ci.yml`:
+<details open>
+<summary><strong>GitLab CI</strong> — add to <code>.gitlab-ci.yml</code></summary>
 
 ```yaml
 stitch-fix:
@@ -108,7 +79,10 @@ stitch-check:
     - stitch ci
 ```
 
-**GitHub Actions** — create `.github/workflows/stitch.yml`:
+</details>
+
+<details>
+<summary><strong>GitHub Actions</strong> — create <code>.github/workflows/stitch.yml</code></summary>
 
 ```yaml
 name: stitch-autofix
@@ -122,7 +96,6 @@ permissions:
   pull-requests: write
 
 jobs:
-  # Fix: CI failed on a non-stitch branch → generate fix
   fix:
     if: >-
       github.event.workflow_run.conclusion == 'failure' &&
@@ -136,7 +109,6 @@ jobs:
           STITCH_ANTHROPIC_API_KEY: ${{ secrets.STITCH_ANTHROPIC_API_KEY }}
           STITCH_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Check: stitch/fix-* branch completed → verify (create MR) or escalate
   check:
     if: startsWith(github.event.workflow_run.head_branch, 'stitch/')
     runs-on: ubuntu-latest
@@ -149,41 +121,138 @@ jobs:
           STITCH_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-That's it. When a pipeline fails, stitch generates a fix and pushes it to a `stitch/fix-*` branch. CI runs on that branch, and:
-- **CI passes** → stitch creates the MR automatically
-- **CI fails** → stitch **retries** on the same branch (with model escalation after 2 attempts)
-- **All retries exhausted** → escalates to human review
+</details>
 
-> **Loop prevention:** The `except`/`only` rules (GitLab) and branch name conditions (GitHub) ensure stitch only fixes normal branches. The `max_attempts` setting (default 3) caps retries.
+**Done.** When a pipeline fails, stitch pushes a fix to a `stitch/fix-*` branch. CI runs on that branch:
 
-> **GitHub note:** `workflow_run` events fire 1-5 minutes after the triggering workflow completes. This is a GitHub platform limitation, not a stitch delay.
+- **CI passes** → stitch creates the PR automatically
+- **CI fails** → stitch retries on the same branch (escalating to Sonnet after 2 attempts)
+- **All retries exhausted** → stitch notifies your team for human review
 
-## CI-native mode
+> **Loop prevention:** The `except`/`only` rules (GitLab) and branch conditions (GitHub) ensure stitch only fixes normal branches. `max_attempts` (default 3) caps retries.
 
-`stitch ci` auto-detects the platform from environment variables and processes all failed jobs in the current pipeline.
+## How it works
+
+| Phase | Trigger | What happens |
+|-------|---------|-------------|
+| **Fix** | CI fails on your branch | Generates fix, pushes to `stitch/fix-*` branch |
+| **Retry** | CI fails on `stitch/fix-*` | Retries on the same branch, escalating model after 2 attempts |
+| **Verify** | CI passes on `stitch/fix-*` | Creates PR targeting your original branch |
+| **Exhaust** | Max retries reached | Notifies team via Slack/webhook |
+
+### Error classification
+
+stitch classifies errors to choose the right model and strategy:
+
+| Type | Model | Examples |
+|------|-------|---------|
+| `lint` | Haiku | Unused imports, missing semicolons, style violations |
+| `format` | Haiku | Indentation, trailing whitespace, line length |
+| `simple_type` | Haiku | Missing type annotations, basic type mismatches |
+| `config_ci` | Haiku | YAML syntax, missing CI variables, stage ordering |
+| `build` | Haiku | Missing dependencies, import errors, module resolution |
+| `complex_type` | Sonnet | Generic type inference, conditional types, overloads |
+| `test_contract` | Sonnet | Broken test assertions, mock mismatches, fixture errors |
+| `logic_error` | Sonnet | Off-by-one errors, incorrect conditions, edge cases |
+| `unknown` | Sonnet | Unclassified errors — Sonnet handles the ambiguity |
+
+### Patch safety
+
+Every patch is validated **before** pushing. stitch rejects fixes that:
+
+- Rewrite more than 40% of a file (diff ratio guard)
+- Change function signatures or remove exports
+- Add new dependencies or imports
+- Delete files
+- Modify more than 5 files or 200 lines
+
+If validation fails, stitch escalates instead of pushing broken code. All thresholds are [configurable](#per-repo-config).
+
+## Configuration
+
+### Environment variables
 
 ```bash
-stitch ci                          # auto-detect platform, text output
+# Required
+STITCH_ANTHROPIC_API_KEY=sk-ant-...
+
+# Platform credentials (at least one)
+STITCH_GITLAB_TOKEN=glpat-...
+STITCH_GITHUB_TOKEN=ghp_...
+
+# Self-hosted instances
+STITCH_GITLAB_BASE_URL=https://gitlab.example.com
+STITCH_GITHUB_BASE_URL=https://github.example.com/api/v3
+
+# Tuning (optional)
+STITCH_HAIKU_CONFIDENCE_THRESHOLD=0.80    # default
+STITCH_SONNET_CONFIDENCE_THRESHOLD=0.40   # default
+STITCH_MAX_ATTEMPTS=3                     # default
+```
+
+### Per-repo config
+
+Place a `.stitch.yml` in your repo root to customize behavior. Run `stitch setup` to auto-generate it.
+
+```yaml
+languages: [python, typescript]
+linter: ruff
+test_runner: pytest
+package_manager: pip
+
+conventions:
+  - "Always use explicit return types on public functions."
+  - "Never downgrade dependency versions."
+
+max_attempts: 3
+
+validation:
+  max_diff_ratio: 0.40
+  max_files_changed: 5
+  max_lines_changed: 200
+  block_new_imports: true
+  block_signature_changes: true
+  block_export_removal: true
+
+notify:
+  channels:
+    - type: slack
+      webhook_url: https://hooks.slack.com/services/xxx/yyy/zzz
+    - type: webhook
+      url: https://hooks.example.com/stitch
+```
+
+### Notifications
+
+When stitch exhausts all fix attempts, it notifies your team. Configure channels in `.stitch.yml` or use the programmatic callback:
+
+```python
+async def on_escalate(request, result):
+    await slack.post(f"Human needed: {result.reason} on {request.branch}")
+
+agent = StitchAgent(
+    adapter=adapter,
+    anthropic_api_key="sk-ant-...",
+    escalation_callback=on_escalate,
+)
+```
+
+## CLI
+
+### CI-native mode (recommended)
+
+```bash
+stitch ci                          # auto-detect platform, fix failed jobs
 stitch ci --output json            # machine-readable output
 stitch ci --platform gitlab        # override auto-detection
 stitch ci --max-jobs 3             # limit jobs processed (default 5)
 ```
 
-**How detection works:**
+Platform is auto-detected from environment variables (`CI_PROJECT_ID` for GitLab, `GITHUB_REPOSITORY` for GitHub).
 
-| Environment variable | Platform |
-|---|---|
-| `CI_PROJECT_ID` | GitLab |
-| `GITHUB_REPOSITORY` | GitHub |
+### Manual fix
 
-On `stitch/fix-*` branches, `stitch ci` auto-detects the right action:
-- **No failed jobs** → verify mode (creates MR)
-- **Failed jobs + attempts remaining** → retry mode (generates new fix, pushes to same branch)
-- **Failed jobs + max attempts reached** → escalate mode (human review needed)
-
-## Alternative: CLI
-
-For manual use or scripting outside CI (creates MR immediately, no two-phase flow):
+For scripting or one-off fixes outside CI:
 
 ```bash
 stitch fix \
@@ -192,6 +261,13 @@ stitch fix \
   --pipeline-id 9999 \
   --job-id 1234 \
   --branch main
+```
+
+### Onboarding
+
+```bash
+stitch setup --repo . --platform gitlab    # generate .stitch.yml
+stitch doctor --repo . --platform gitlab   # health check + diagnostics
 ```
 
 ### Python API
@@ -216,174 +292,47 @@ async def main():
     async with adapter:
         result = await agent.fix(request)
     print(result.status)   # 'fixed' | 'escalate' | 'error'
-    print(result.mr_url)   # MR/PR URL if fixed
+    print(result.mr_url)   # PR URL if fixed
 
 asyncio.run(main())
 ```
 
-Works with GitHub too — use `GitHubAdapter` and `platform="github"`. Self-hosted instances are supported via `STITCH_GITLAB_BASE_URL` / `STITCH_GITHUB_BASE_URL`.
-
-## Onboarding
-
-stitch includes commands to get you set up fast:
-
-### `stitch setup` — auto-detect your project
-
-```bash
-stitch setup --repo . --platform gitlab
-```
-
-Scans your repo and generates a `.stitch.yml` config by detecting languages, linter, test runner, package manager, and CI provider.
-
-### `stitch doctor` — health check
-
-```bash
-stitch doctor --repo . --platform gitlab --project-id 42
-```
-
-Runs diagnostic checks on Python version, API keys, platform connectivity, and permissions. Returns clear remediation steps for any issues found.
-
-## Configuration
-
-### Environment variables
-
-```bash
-# Required
-STITCH_ANTHROPIC_API_KEY=sk-ant-...
-
-# Platform credentials (at least one)
-STITCH_GITLAB_TOKEN=glpat-...
-STITCH_GITHUB_TOKEN=ghp_...
-
-# Base URLs (for self-hosted instances)
-STITCH_GITLAB_BASE_URL=https://gitlab.example.com
-STITCH_GITHUB_BASE_URL=https://github.example.com/api/v3
-
-# Confidence thresholds (0.0–1.0)
-STITCH_HAIKU_CONFIDENCE_THRESHOLD=0.80    # default
-STITCH_SONNET_CONFIDENCE_THRESHOLD=0.40   # default
-
-# Max fix attempts per branch (default 3)
-STITCH_MAX_ATTEMPTS=3
-```
-
-### Per-repo config (`.stitch.yml`)
-
-Place a `.stitch.yml` in your repo root to customize behavior per project:
-
-```yaml
-languages: [python, typescript]
-linter: ruff
-test_runner: pytest
-package_manager: pip
-
-# Custom conventions the AI should follow
-conventions:
-  - "Always use explicit return types on public functions."
-  - "Never downgrade dependency versions."
-
-max_attempts: 3
-
-# Patch validation thresholds
-validation:
-  max_diff_ratio: 0.40
-  max_files_changed: 5
-  max_lines_changed: 200
-  block_new_imports: true
-  block_signature_changes: true
-  block_export_removal: true
-
-# Notifications on escalation
-notify:
-  timeout_seconds: 10.0
-  fanout: parallel
-  channels:
-    - type: slack
-      webhook_url: https://hooks.slack.com/services/xxx/yyy/zzz
-    - type: webhook
-      url: https://hooks.example.com/stitch
-```
-
-Run `stitch setup` to auto-generate this file.
-
-## Notifications and escalation
-
-When stitch can't auto-fix an error (low confidence, max attempts reached), it escalates. Configure notification channels in `.stitch.yml`:
-
-```yaml
-notify:
-  channels:
-    - type: slack
-      webhook_url: https://hooks.slack.com/services/xxx/yyy/zzz
-    - type: webhook
-      url: https://hooks.example.com/stitch
-```
-
-Or use the programmatic escalation callback:
-
-```python
-async def on_escalate(request, result):
-    await slack.post(f"Human needed: {result.reason} on {request.branch}")
-
-agent = StitchAgent(
-    adapter=adapter,
-    anthropic_api_key="sk-ant-...",
-    escalation_callback=on_escalate,
-)
-```
-
-## CLI reference
-
-```bash
-# CI-native mode (recommended — run inside your CI pipeline)
-stitch ci [--output json|text] [--platform gitlab|github] [--max-jobs 5]
-
-# Fix a specific failed job (creates MR immediately)
-stitch fix \
-  --platform gitlab|github \
-  --project-id <id> \
-  --pipeline-id <pipeline_id> \
-  --job-id <job_id> \
-  --branch <branch> \
-  [--job-name <name>] \
-  [--gitlab-url <url>] \
-  [--github-url <url>] \
-  [--haiku-threshold 0.80] \
-  [--sonnet-threshold 0.40] \
-  [--output json|text]
-
-# Auto-detect project and generate .stitch.yml
-stitch setup --repo . --platform gitlab|github [--json]
-
-# Run health checks
-stitch doctor --repo . --platform gitlab|github [--project-id <id>] [--json]
-```
-
-**Exit codes:** `0` = success/fixed, `1` = error/escalated
+Works with GitHub too — use `GitHubAdapter` and `platform="github"`.
 
 ## Architecture
 
 ```
 stitch_agent/
-├── adapters/           # Platform integrations (GitLab, GitHub)
+├── adapters/              # Platform integrations (GitLab, GitHub)
 ├── core/
-│   ├── agent.py        # Main fix loop + retry logic
-│   ├── classifier.py   # Error detection (150+ patterns)
-│   ├── fixer.py        # Claude-powered patch generation
-│   ├── patch_validator.py  # Programmatic patch safety checks
-│   ├── pr_creator.py   # MR/PR creation
-│   └── notifier.py     # Multi-channel notifications
-├── onboarding/         # setup, doctor, report commands
-├── models.py           # FixRequest, FixResult, ErrorType, ValidationConfig
-├── history.py          # SQLite fix tracking
-├── settings.py         # Environment configuration
-└── config.py           # .stitch.yml parsing
+│   ├── agent.py           # Fix loop + retry logic
+│   ├── classifier.py      # Error detection (150+ patterns)
+│   ├── fixer.py           # Claude-powered patch generation
+│   ├── patch_validator.py # Programmatic patch safety checks
+│   ├── pr_creator.py      # MR/PR creation
+│   └── notifier.py        # Multi-channel notifications
+├── onboarding/            # setup, doctor commands
+├── models.py              # FixRequest, FixResult, ErrorType, ValidationConfig
+├── history.py             # SQLite fix tracking
+├── settings.py            # Environment configuration
+└── config.py              # .stitch.yml parsing
 
 runners/
-├── cli.py              # CLI entry point
-└── ci_runner.py        # CI-native runner (fix, verify, retry)
+├── cli.py                 # CLI entry point
+└── ci_runner.py           # CI-native runner (fix, verify, retry)
+```
+
+## Contributing
+
+Contributions are welcome. Please open an issue first to discuss what you'd like to change.
+
+```bash
+git clone https://github.com/g24r/stitch.git
+cd stitch
+pip install -e ".[dev]"
+pytest
 ```
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
