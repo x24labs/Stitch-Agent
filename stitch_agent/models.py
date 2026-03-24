@@ -143,4 +143,3 @@ class StitchConfig(BaseModel):
     notify: NotifyConfig = Field(default_factory=NotifyConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
     max_attempts: int = Field(default=3, ge=1, le=10)
-    docker_image: str | None = None

@@ -339,7 +339,6 @@ def _merge_config(existing: StitchConfig, profile: DetectedProfile) -> StitchCon
         escalate=existing.escalate,
         notify=existing.notify,
         max_attempts=existing.max_attempts,
-        docker_image=existing.docker_image,
     )
 
 
@@ -360,9 +359,6 @@ def _render_config(config: StitchConfig) -> str:
     payload["auto_fix"] = config.auto_fix
     payload["escalate"] = config.escalate
     payload["max_attempts"] = config.max_attempts
-
-    if config.docker_image:
-        payload["docker_image"] = config.docker_image
 
     notify_payload = config.notify.model_dump(exclude_none=True, exclude_defaults=True)
     channels = notify_payload.get("channels")

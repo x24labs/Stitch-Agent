@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.2.1 — 2026-03-24
+
+### Removed
+
+- **`stitch connect` command** — vestigial webhook provisioning (docs removed in v0.1.5, code removed now)
+- Dead dependencies: `gitpython`, `python-gitlab`, `pygithub`, `fastapi`, `uvicorn`
+- `webhook_secret` setting, `docker_image` config field, `_run_not_implemented()` placeholder
+- `after_script` CI mode — simplified to `.post` stage only
+- Stale `ISSUE-unrecognized-error-patterns.md`
+
+### Fixed
+
+- `__version__` in `__init__.py` now matches `pyproject.toml` (was stuck at 0.1.0)
+- README: added missing `patch_validator.py` to architecture tree, added `validation` config to `.stitch.yml` example, fixed intro text, added `LICENSE` file
+
 ## v0.2.0 — 2026-03-23
 
 ### Added
@@ -102,14 +117,13 @@ Initial public release.
 ### Features
 
 - **CI-native mode** (`stitch ci`) — auto-detect GitLab/GitHub from env vars, zero config
-  - GitLab: `after_script` (per-job) and `.post` stage (catch-all) modes
+  - GitLab: `.post` stage (catch-all)
   - GitHub: `workflow_run` event trigger
   - Loop prevention via branch exclusion + `max_attempts`
 - **Error classification** — 150+ patterns across 9 error types
 - **AI-powered fixes** — Haiku for simple errors, Sonnet for complex ones
 - **Automatic PR/MR creation** with Conventional Commits messages
-- **Strict validation mode** — Docker sandbox verification before opening PRs
 - **Multi-channel escalation** — Slack, webhook, and custom notifications
-- **Onboarding commands** — `stitch setup`, `stitch doctor`, `stitch connect`
+- **Onboarding commands** — `stitch setup`, `stitch doctor`
 - **Fix history** — SQLite-backed tracking with pattern analytics
 - **Platform support** — GitLab, GitHub (including self-hosted)

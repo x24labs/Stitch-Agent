@@ -5,17 +5,19 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from stitch_agent.adapters.gitlab import GitLabAdapter
 from stitch_agent.core.agent import StitchAgent
 from stitch_agent.models import FixRequest
-from stitch_agent.onboarding.connect import run_connect
 from stitch_agent.onboarding.doctor import run_doctor_checks
-from stitch_agent.onboarding.report import CommandReport
 from stitch_agent.onboarding.setup import run_setup
 from stitch_agent.settings import StitchSettings
 
-_SUBCOMMANDS = {"fix", "ci", "setup", "doctor", "connect"}
+if TYPE_CHECKING:
+    from stitch_agent.onboarding.report import CommandReport
+
+_SUBCOMMANDS = {"fix", "ci", "setup", "doctor"}
 
 
 def _add_fix_arguments(parser: argparse.ArgumentParser) -> None:
@@ -59,19 +61,6 @@ def build_parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--repo", default=".", help="Repository root path")
     setup_parser.add_argument("--platform", choices=["gitlab", "github"], default="gitlab")
     setup_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
-
-    connect_parser = subparsers.add_parser("connect", help="Connect stitch with CI provider")
-    connect_parser.add_argument("--repo", default=".", help="Repository root path")
-    connect_parser.add_argument("--platform", choices=["gitlab", "github"], default="gitlab")
-    connect_parser.add_argument(
-        "--project-id", default=None, help="GitHub repository in owner/repo format"
-    )
-    connect_parser.add_argument(
-        "--webhook-url",
-        default=None,
-        help="Public stitch webhook endpoint, for example https://example.com/webhook/github",
-    )
-    connect_parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
 
     ci_parser = subparsers.add_parser(
         "ci", help="Run inside CI — auto-detect platform and fix failed jobs"
@@ -117,8 +106,6 @@ async def run(args: argparse.Namespace) -> int:
         return await run_doctor(args)
     if args.command == "setup":
         return await run_setup_command(args)
-    if args.command == "connect":
-        return await run_connect_command(args)
     if args.command not in {None, "fix"}:
         print(f"Unknown command: {args.command}", file=sys.stderr)
         return 1
@@ -217,40 +204,8 @@ async def run_doctor(args: argparse.Namespace) -> int:
     return report.exit_code()
 
 
-def _run_not_implemented(command: str, *, json_output: bool) -> int:
-    report = CommandReport(
-        command=command,
-        ok=False,
-        prompts=[f"{command} command is not implemented yet"],
-        warnings=[f"{command} is in progress"],
-        next_steps=["Run `stitch doctor --json` to verify current readiness"],
-    )
-    if json_output:
-        print(json.dumps(report.to_dict(), indent=2))
-    else:
-        print(f"{command} is not implemented yet")
-        print("Run `stitch doctor --json` to verify current readiness")
-    return report.exit_code()
-
-
 async def run_setup_command(args: argparse.Namespace) -> int:
     report = run_setup(repo_root=Path(args.repo), platform=args.platform)
-    if args.json:
-        print(json.dumps(report.to_dict(), indent=2))
-    else:
-        _print_doctor_report(report)
-    return report.exit_code()
-
-
-async def run_connect_command(args: argparse.Namespace) -> int:
-    settings = StitchSettings()
-    report = await run_connect(
-        platform=args.platform,
-        repo_root=Path(args.repo),
-        project_id=args.project_id,
-        webhook_url=args.webhook_url,
-        settings=settings,
-    )
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
     else:

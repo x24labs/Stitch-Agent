@@ -15,4 +15,3 @@ class StitchSettings(BaseSettings):
     sonnet_confidence_threshold: float = 0.40
     max_attempts: int = 3
     workspace_root: str = "/tmp/stitch-workspace"
-    webhook_secret: str = ""

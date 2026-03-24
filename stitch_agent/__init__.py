@@ -8,7 +8,7 @@ from stitch_agent.models import (
     StitchConfig,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.1"
 
 __all__ = [
     "StitchAgent",

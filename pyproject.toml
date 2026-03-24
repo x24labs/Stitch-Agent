@@ -21,13 +21,9 @@ dependencies = [
     "pydantic-settings>=2.0",
     "httpx>=0.27",
     "pyyaml>=6.0",
-    "gitpython>=3.1",
 ]
 
 [project.optional-dependencies]
-gitlab = ["python-gitlab>=4.0"]
-github = ["pygithub>=2.0"]
-webhook = ["fastapi>=0.115", "uvicorn>=0.30"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
@@ -37,7 +33,6 @@ dev = [
     "respx>=0.22",
 ]
 publish = ["build>=1.0", "twine>=5.0"]
-all = ["stitch-agent[gitlab,github,webhook,dev]"]
 
 [project.scripts]
 stitch = "runners.cli:main"

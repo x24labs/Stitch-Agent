@@ -3,7 +3,7 @@
   <p align="center"><strong>The AI that stitches your CI back together.</strong></p>
   <p align="center">
     Open-source AI agent that autonomously detects, diagnoses, and fixes CI pipeline failures.<br/>
-    Platform-agnostic. Zero config. Lives inside your CI — no servers, no webhooks.
+    Platform-agnostic. Zero config. Lives inside your CI — no servers required.
   </p>
 </p>
 
@@ -80,7 +80,7 @@ STITCH_GITLAB_TOKEN=glpat-...      # or STITCH_GITHUB_TOKEN=ghp_...
 
 ### Add to your CI (30 seconds)
 
-Copy one YAML snippet into your CI config. No server to deploy, no webhooks to configure.
+Copy one YAML snippet into your CI config. No server to deploy.
 
 **GitLab CI** — add to `.gitlab-ci.yml`:
 
@@ -284,6 +284,15 @@ conventions:
 
 max_attempts: 3
 
+# Patch validation thresholds
+validation:
+  max_diff_ratio: 0.40
+  max_files_changed: 5
+  max_lines_changed: 200
+  block_new_imports: true
+  block_signature_changes: true
+  block_export_removal: true
+
 # Notifications on escalation
 notify:
   timeout_seconds: 10.0
@@ -358,20 +367,21 @@ stitch doctor --repo . --platform gitlab|github [--project-id <id>] [--json]
 stitch_agent/
 ├── adapters/           # Platform integrations (GitLab, GitHub)
 ├── core/
-│   ├── agent.py        # Main fix loop
+│   ├── agent.py        # Main fix loop + retry logic
 │   ├── classifier.py   # Error detection (150+ patterns)
 │   ├── fixer.py        # Claude-powered patch generation
+│   ├── patch_validator.py  # Programmatic patch safety checks
 │   ├── pr_creator.py   # MR/PR creation
 │   └── notifier.py     # Multi-channel notifications
-├── onboarding/         # setup, doctor commands
-├── models.py           # FixRequest, FixResult, ErrorType
+├── onboarding/         # setup, doctor, report commands
+├── models.py           # FixRequest, FixResult, ErrorType, ValidationConfig
 ├── history.py          # SQLite fix tracking
 ├── settings.py         # Environment configuration
 └── config.py           # .stitch.yml parsing
 
 runners/
 ├── cli.py              # CLI entry point
-└── ci_runner.py        # CI-native runner (two-phase: fix + verify)
+└── ci_runner.py        # CI-native runner (fix, verify, retry)
 ```
 
 ## License
