@@ -32,16 +32,16 @@ Failed pipeline ──> stitch ──> fix branch ──> CI verifies ──> MR
 5. **Verify** — CI runs on the fix branch to confirm the fix actually works
 6. **PR** — if CI passes, stitch opens a Merge/Pull Request automatically
 
-### Two-phase CI flow
+### CI flow
 
-stitch uses a two-phase approach to ensure fixes are verified before creating PRs:
+stitch uses a multi-phase approach with automatic retries:
 
 | Phase | Trigger | What happens |
 |-------|---------|-------------|
 | **Fix** | CI fails on your branch | stitch generates a fix, pushes to `stitch/fix-*` branch (no MR yet) |
+| **Retry** | CI fails on `stitch/fix-*` | stitch retries on the same branch, escalating to Sonnet after 2 attempts |
 | **Verify** | CI passes on `stitch/fix-*` | stitch creates the MR targeting your original branch |
-
-If CI fails on the fix branch, no MR is created — the fix didn't work, and stitch won't create noise.
+| **Exhaust** | Max retries reached | stitch escalates to human review |
 
 ## Supported error types
 
@@ -85,39 +85,10 @@ Copy one YAML snippet into your CI config. No server to deploy, no webhooks to c
 **GitLab CI** — add to `.gitlab-ci.yml`:
 
 ```yaml
-# Option A: after_script (granular — each job reports its own failure)
-
-.stitch-fix: &stitch-fix
-  after_script:
-    - pip install stitch-agent
-    - stitch ci
-  except:
-    refs:
-      - /^stitch\//
-
-my-lint-job:
-  <<: *stitch-fix
-  script:
-    - ruff check .
-
-# Runs on stitch/fix-* branches: verify (CI passed → MR) or escalate (CI failed)
-stitch-check:
-  stage: .post
-  when: always
-  only:
-    refs:
-      - /^stitch\//
-  script:
-    - pip install stitch-agent
-    - stitch ci
-```
-
-```yaml
-# Option B: .post stage (catch-all — one job covers the whole pipeline)
-
 stitch-fix:
   stage: .post
   when: on_failure
+  image: python:3.12-slim
   except:
     refs:
       - /^stitch\//
@@ -128,6 +99,7 @@ stitch-fix:
 stitch-check:
   stage: .post
   when: always
+  image: python:3.12-slim
   only:
     refs:
       - /^stitch\//
@@ -179,22 +151,12 @@ jobs:
 
 That's it. When a pipeline fails, stitch generates a fix and pushes it to a `stitch/fix-*` branch. CI runs on that branch, and:
 - **CI passes** → stitch creates the MR automatically
-- **CI fails** → stitch escalates (the fix didn't work, human review needed)
+- **CI fails** → stitch **retries** on the same branch (with model escalation after 2 attempts)
+- **All retries exhausted** → escalates to human review
 
-> **Loop prevention:** The `except`/`only` rules (GitLab) and branch name conditions (GitHub) ensure stitch only fixes normal branches. The `stitch-check` job auto-detects whether to verify or escalate by checking for failed jobs in the pipeline. The `max_attempts` setting (default 3) caps retries via the API.
+> **Loop prevention:** The `except`/`only` rules (GitLab) and branch name conditions (GitHub) ensure stitch only fixes normal branches. The `max_attempts` setting (default 3) caps retries.
 
 > **GitHub note:** `workflow_run` events fire 1-5 minutes after the triggering workflow completes. This is a GitHub platform limitation, not a stitch delay.
-
-#### GitLab: `after_script` vs `.post` stage
-
-| | `after_script` (Option A) | `.post` stage (Option B) |
-|---|---|---|
-| **Granularity** | Per-job — each job reports its own failure | Per-pipeline — one catch-all job |
-| **`CI_JOB_ID`** | Points to the failed job itself | Points to the stitch job (needs API discovery) |
-| **Setup** | YAML anchor on each job + shared check job | Two extra jobs |
-| **Best for** | Repos where you want per-job fix PRs | Repos where you want a single fix PR per pipeline |
-
-Both options include the `stitch-check` job that auto-detects whether to verify or escalate on fix branches.
 
 ## CI-native mode
 
@@ -214,13 +176,10 @@ stitch ci --max-jobs 3             # limit jobs processed (default 5)
 | `CI_PROJECT_ID` | GitLab |
 | `GITHUB_REPOSITORY` | GitHub |
 
-GitLab mode is further refined by `CI_JOB_STATUS`:
-- Present and `"failed"` → `after_script` mode (single job, no API discovery)
-- Absent → `.post` stage mode (discovers failed jobs via API)
-
 On `stitch/fix-*` branches, `stitch ci` auto-detects the right action:
 - **No failed jobs** → verify mode (creates MR)
-- **Failed jobs** → escalate mode (reports fix didn't work)
+- **Failed jobs + attempts remaining** → retry mode (generates new fix, pushes to same branch)
+- **Failed jobs + max attempts reached** → escalate mode (human review needed)
 
 ## Alternative: CLI
 

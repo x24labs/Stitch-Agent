@@ -2,17 +2,12 @@
 
 Detects platform from environment variables and processes failed jobs automatically.
 
-Three modes on stitch/fix-* branches (auto-detected):
-  1. FIX mode      — CI failed on a normal branch → generate fix, create stitch/fix-* branch
-  2. VERIFY mode   — CI passed on stitch/fix-* → create MR
-  3. ESCALATE mode — CI failed on stitch/fix-* → notify team, fix didn't work
+Modes on stitch/fix-* branches (auto-detected):
+  1. FIX mode    — CI failed on a normal branch → generate fix, push stitch/fix-* branch
+  2. VERIFY mode — CI passed on stitch/fix-* → create MR
+  3. RETRY mode  — CI failed on stitch/fix-* → retry fix with model escalation
 
-GitLab modes (fix phase):
-  - after_script: CI_JOB_STATUS present, job_id is the failed job itself
-  - .post stage:  CI_JOB_STATUS absent, discovers failed jobs via API
-
-GitHub:
-  - Always uses GITHUB_EVENT_PATH (workflow_run event payload)
+Both GitLab (.post stage) and GitHub (workflow_run) discover failed jobs via API.
 """
 
 from __future__ import annotations
@@ -40,7 +35,6 @@ class CIContext:
     pipeline_id: str
     branch: str
     base_url: str | None = None
-    # after_script mode: single job already known
     job_id: str | None = None
     job_name: str | None = None
     # commit message from CI env (avoids API call)
@@ -74,27 +68,12 @@ def _build_gitlab_context() -> CIContext:
     base_url = os.environ.get("CI_SERVER_URL")
     commit_message = os.environ.get("CI_COMMIT_MESSAGE")
 
-    job_status = os.environ.get("CI_JOB_STATUS")
-    if job_status == "failed":
-        # after_script mode: this job is the failed one
-        return CIContext(
-            platform="gitlab",
-            project_id=project_id,
-            pipeline_id=pipeline_id,
-            branch=branch,
-            base_url=f"{base_url}" if base_url else None,
-            job_id=os.environ.get("CI_JOB_ID"),
-            job_name=os.environ.get("CI_JOB_NAME"),
-            commit_message=commit_message,
-        )
-
-    # .post stage mode: need to discover failed jobs
     return CIContext(
         platform="gitlab",
         project_id=project_id,
         pipeline_id=pipeline_id,
         branch=branch,
-        base_url=f"{base_url}" if base_url else None,
+        base_url=base_url or None,
         commit_message=commit_message,
     )
 
@@ -378,11 +357,8 @@ async def _run_fix_mode(
     results: list[dict[str, object]] = []
 
     async with adapter:
-        if ctx.job_id:
-            jobs_to_fix = [{"id": ctx.job_id, "name": ctx.job_name or ""}]
-        else:
-            discovered = await adapter.list_failed_jobs(ctx.project_id, ctx.pipeline_id)
-            jobs_to_fix = [{"id": str(j["id"]), "name": str(j.get("name", ""))} for j in discovered]
+        discovered = await adapter.list_failed_jobs(ctx.project_id, ctx.pipeline_id)
+        jobs_to_fix = [{"id": str(j["id"]), "name": str(j.get("name", ""))} for j in discovered]
 
         if not jobs_to_fix:
             if output_format == "json":

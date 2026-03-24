@@ -41,36 +41,14 @@ def test_detect_platform_no_env(monkeypatch: pytest.MonkeyPatch) -> None:
         detect_platform()
 
 
-# --- build_context: GitLab after_script ---
+# --- build_context: GitLab ---
 
 
-def test_build_context_gitlab_after_script(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CI_PROJECT_ID", "42")
-    monkeypatch.setenv("CI_PIPELINE_ID", "100")
-    monkeypatch.setenv("CI_COMMIT_REF_NAME", "main")
-    monkeypatch.setenv("CI_SERVER_URL", "https://gitlab.example.com")
-    monkeypatch.setenv("CI_JOB_STATUS", "failed")
-    monkeypatch.setenv("CI_JOB_ID", "200")
-    monkeypatch.setenv("CI_JOB_NAME", "lint")
-
-    ctx = build_context("gitlab")
-    assert ctx.platform == "gitlab"
-    assert ctx.project_id == "42"
-    assert ctx.pipeline_id == "100"
-    assert ctx.branch == "main"
-    assert ctx.job_id == "200"
-    assert ctx.job_name == "lint"
-    assert ctx.base_url == "https://gitlab.example.com"
-
-
-# --- build_context: GitLab .post stage ---
-
-
-def test_build_context_gitlab_post_stage(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_context_gitlab(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CI_PROJECT_ID", "42")
     monkeypatch.setenv("CI_PIPELINE_ID", "100")
     monkeypatch.setenv("CI_COMMIT_REF_NAME", "feature/x")
-    monkeypatch.delenv("CI_JOB_STATUS", raising=False)
+
     monkeypatch.delenv("CI_SERVER_URL", raising=False)
 
     ctx = build_context("gitlab")
@@ -130,7 +108,7 @@ async def test_run_ci_no_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CI_PROJECT_ID", "42")
     monkeypatch.setenv("CI_PIPELINE_ID", "100")
     monkeypatch.setenv("CI_COMMIT_REF_NAME", "main")
-    monkeypatch.delenv("CI_JOB_STATUS", raising=False)
+
     monkeypatch.delenv("CI_SERVER_URL", raising=False)
     monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
     monkeypatch.setenv("STITCH_ANTHROPIC_API_KEY", "fake-key")
@@ -146,50 +124,6 @@ async def test_run_ci_no_failures(monkeypatch: pytest.MonkeyPatch) -> None:
         exit_code = await run_ci(output_format="text", platform_override="gitlab")
 
     assert exit_code == 0
-
-
-async def test_run_ci_after_script_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CI_PROJECT_ID", "42")
-    monkeypatch.setenv("CI_PIPELINE_ID", "100")
-    monkeypatch.setenv("CI_COMMIT_REF_NAME", "main")
-    monkeypatch.setenv("CI_JOB_STATUS", "failed")
-    monkeypatch.setenv("CI_JOB_ID", "200")
-    monkeypatch.setenv("CI_JOB_NAME", "lint")
-    monkeypatch.delenv("CI_SERVER_URL", raising=False)
-    monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
-    monkeypatch.setenv("STITCH_ANTHROPIC_API_KEY", "fake-key")
-
-    from stitch_agent.models import ErrorType, FixResult
-
-    mock_result = FixResult(
-        status="fixed",
-        error_type=ErrorType.LINT,
-        confidence=0.95,
-        reason="Fixed lint error",
-        mr_url="https://gitlab.com/mr/1",
-        fix_branch="stitch/fix-abc",
-    )
-
-    mock_adapter = AsyncMock()
-    mock_adapter.__aenter__ = AsyncMock(return_value=mock_adapter)
-    mock_adapter.__aexit__ = AsyncMock(return_value=False)
-
-    mock_agent = AsyncMock()
-    mock_agent.fix = AsyncMock(return_value=mock_result)
-
-    with (
-        patch("stitch_agent.adapters.gitlab.GitLabAdapter", return_value=mock_adapter),
-        patch("runners.ci_runner.StitchAgent", return_value=mock_agent),
-    ):
-        from runners.ci_runner import run_ci
-
-        exit_code = await run_ci(output_format="text", platform_override="gitlab")
-
-    assert exit_code == 0
-    mock_agent.fix.assert_called_once()
-    call_request = mock_agent.fix.call_args[0][0]
-    assert call_request.job_id == "200"
-    assert call_request.job_name == "lint"
 
 
 # --- _is_stitch_branch ---
@@ -214,7 +148,7 @@ async def test_run_ci_verify_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CI_PIPELINE_ID", "500")
     monkeypatch.setenv("CI_COMMIT_REF_NAME", "stitch/fix-100")
     monkeypatch.setenv("CI_COMMIT_MESSAGE", "fix(lint): remove unused import\n\nStitch-Target: main")
-    monkeypatch.delenv("CI_JOB_STATUS", raising=False)
+
     monkeypatch.delenv("CI_SERVER_URL", raising=False)
     monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
     monkeypatch.setenv("STITCH_ANTHROPIC_API_KEY", "fake-key")
@@ -247,7 +181,7 @@ async def test_run_ci_verify_uses_api_fallback(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("CI_PIPELINE_ID", "500")
     monkeypatch.setenv("CI_COMMIT_REF_NAME", "stitch/fix-100")
     monkeypatch.delenv("CI_COMMIT_MESSAGE", raising=False)
-    monkeypatch.delenv("CI_JOB_STATUS", raising=False)
+
     monkeypatch.delenv("CI_SERVER_URL", raising=False)
     monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
     monkeypatch.setenv("STITCH_ANTHROPIC_API_KEY", "fake-key")
@@ -280,7 +214,7 @@ async def test_run_ci_verify_api_fallback_404(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("CI_PIPELINE_ID", "500")
     monkeypatch.setenv("CI_COMMIT_REF_NAME", "stitch/fix-100")
     monkeypatch.delenv("CI_COMMIT_MESSAGE", raising=False)
-    monkeypatch.delenv("CI_JOB_STATUS", raising=False)
+
     monkeypatch.delenv("CI_SERVER_URL", raising=False)
     monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
     monkeypatch.setenv("STITCH_ANTHROPIC_API_KEY", "fake-key")
@@ -306,7 +240,7 @@ async def test_run_ci_verify_mode_no_target(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("CI_PIPELINE_ID", "500")
     monkeypatch.setenv("CI_COMMIT_REF_NAME", "stitch/fix-100")
     monkeypatch.setenv("CI_COMMIT_MESSAGE", "fix(lint): remove unused import")
-    monkeypatch.delenv("CI_JOB_STATUS", raising=False)
+
     monkeypatch.delenv("CI_SERVER_URL", raising=False)
     monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
     monkeypatch.setenv("STITCH_ANTHROPIC_API_KEY", "fake-key")
@@ -332,7 +266,7 @@ async def test_run_ci_escalate_when_fix_exhausted(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("CI_PIPELINE_ID", "501")
     monkeypatch.setenv("CI_COMMIT_REF_NAME", "stitch/fix-100")
     monkeypatch.setenv("CI_COMMIT_MESSAGE", "fix(lint): remove unused import\n\nStitch-Target: main")
-    monkeypatch.delenv("CI_JOB_STATUS", raising=False)
+
     monkeypatch.delenv("CI_SERVER_URL", raising=False)
     monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
     monkeypatch.setenv("STITCH_ANTHROPIC_API_KEY", "fake-key")
@@ -361,7 +295,7 @@ async def test_run_ci_retry_when_fix_fails(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("CI_PIPELINE_ID", "501")
     monkeypatch.setenv("CI_COMMIT_REF_NAME", "stitch/fix-100")
     monkeypatch.setenv("CI_COMMIT_MESSAGE", "fix(lint): remove unused import\n\nStitch-Target: main")
-    monkeypatch.delenv("CI_JOB_STATUS", raising=False)
+
     monkeypatch.delenv("CI_SERVER_URL", raising=False)
     monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
     monkeypatch.setenv("STITCH_ANTHROPIC_API_KEY", "fake-key")
@@ -402,13 +336,10 @@ async def test_run_ci_retry_when_fix_fails(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 async def test_run_ci_fix_mode_no_mr(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fix mode should call agent.fix with create_mr=False."""
+    """Fix mode should discover failed jobs via API and call agent.fix with create_mr=False."""
     monkeypatch.setenv("CI_PROJECT_ID", "42")
     monkeypatch.setenv("CI_PIPELINE_ID", "100")
     monkeypatch.setenv("CI_COMMIT_REF_NAME", "main")
-    monkeypatch.setenv("CI_JOB_STATUS", "failed")
-    monkeypatch.setenv("CI_JOB_ID", "200")
-    monkeypatch.setenv("CI_JOB_NAME", "lint")
     monkeypatch.delenv("CI_SERVER_URL", raising=False)
     monkeypatch.setenv("STITCH_GITLAB_TOKEN", "fake-token")
     monkeypatch.setenv("STITCH_ANTHROPIC_API_KEY", "fake-key")
@@ -426,6 +357,9 @@ async def test_run_ci_fix_mode_no_mr(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_adapter = AsyncMock()
     mock_adapter.__aenter__ = AsyncMock(return_value=mock_adapter)
     mock_adapter.__aexit__ = AsyncMock(return_value=False)
+    mock_adapter.list_failed_jobs = AsyncMock(
+        return_value=[{"id": "200", "name": "lint", "status": "failed"}]
+    )
 
     mock_agent = AsyncMock()
     mock_agent.fix = AsyncMock(return_value=mock_result)
@@ -439,7 +373,7 @@ async def test_run_ci_fix_mode_no_mr(monkeypatch: pytest.MonkeyPatch) -> None:
         exit_code = await run_ci(output_format="text", platform_override="gitlab")
 
     assert exit_code == 0
+    mock_adapter.list_failed_jobs.assert_called_once()
     mock_agent.fix.assert_called_once()
-    # Verify create_mr=False is passed
     call_kwargs = mock_agent.fix.call_args
     assert call_kwargs.kwargs.get("create_mr") is False
