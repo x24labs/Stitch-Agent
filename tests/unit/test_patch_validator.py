@@ -1,11 +1,13 @@
 """Tests for patch_validator module."""
 
+from typing import Literal
+
 from stitch_agent.core.fixer import FileChange, FixPatch
 from stitch_agent.core.patch_validator import PatchValidator
 from stitch_agent.models import ValidationConfig
 
 
-def _make_patch(path: str, content: str, action: str = "update") -> FixPatch:
+def _make_patch(path: str, content: str, action: Literal["update", "create", "delete"] = "update") -> FixPatch:
     return FixPatch(
         changes=[FileChange(path=path, new_content=content, action=action)],
         commit_message="fix(test): test",
