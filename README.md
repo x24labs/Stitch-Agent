@@ -50,6 +50,8 @@ STITCH_ANTHROPIC_API_KEY=sk-ant-...
 STITCH_GITLAB_TOKEN=glpat-...      # or STITCH_GITHUB_TOKEN for GitHub
 ```
 
+> **Important:** In GitLab, uncheck **"Protect variable"** for both variables. stitch pushes fixes to `stitch/fix-*` branches, which are not protected by default. Protected variables are only injected into protected branches, so stitch won't be able to authenticate on fix branches if the variables are protected.
+
 ### 3. Add to your CI
 
 <details open>
