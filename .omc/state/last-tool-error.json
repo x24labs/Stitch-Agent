@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"/home/roblesh/projects/x24labs/stitch/library/.venv/bin/python -m twine upload dist/* 2>&1\",\"timeout\":120000,\"description\":\"Publish to PyPI\"}",
-  "error": "Exit code 1\nUploading distributions to https://upload.pypi.org/legacy/\n\u001b[33mWARNING \u001b[0m This environment is not supported for trusted publishing               \n/home/roblesh/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/getpass.py:91: GetPassWarning: Can not control echo on the terminal.\n  passwd = fallback_getpass(prompt, stream)\nWarning: Password input may be echoed.\nEnter your API token: Traceback (most recent call last):\n  File \"/home/roblesh/.local/share/uv/python/...",
-  "timestamp": "2026-03-28T02:07:46.102Z",
-  "retry_count": 1
+  "tool_input_preview": "{\"command\":\"git tag -a v0.3.0 -m \\\"Release v0.3.0 — error-type-specific prompts, relaxed validation, smart log truncation, increased file/token limits, line numbers in prompt\\\" && git push origin v0.3...",
+  "error": "Exit code 128\nfatal: tag 'v0.3.0' already exists",
+  "timestamp": "2026-03-28T03:22:30.415Z",
+  "retry_count": 3
 }

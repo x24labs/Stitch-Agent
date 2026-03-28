@@ -99,8 +99,14 @@
     },
     {
       "path": "stitch_agent/core/agent.py",
-      "accessCount": 1,
-      "lastAccessed": 1774667067426,
+      "accessCount": 2,
+      "lastAccessed": 1774668100179,
+      "type": "file"
+    },
+    {
+      "path": "stitch_agent/core/patch_validator.py",
+      "accessCount": 2,
+      "lastAccessed": 1774668100519,
       "type": "file"
     },
     {
@@ -119,12 +125,6 @@
       "path": "stitch_agent/settings.py",
       "accessCount": 1,
       "lastAccessed": 1774667075318,
-      "type": "file"
-    },
-    {
-      "path": "stitch_agent/core/patch_validator.py",
-      "accessCount": 1,
-      "lastAccessed": 1774667152711,
       "type": "file"
     }
   ],
