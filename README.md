@@ -327,7 +327,7 @@ runners/
 Contributions are welcome. Please open an issue first to discuss what you'd like to change.
 
 ```bash
-git clone https://github.com/g24r/stitch.git
+git clone https://git.g24r.com/x24labs/stitch/library.git
 cd stitch
 pip install -e ".[dev]"
 pytest
