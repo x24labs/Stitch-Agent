@@ -193,20 +193,30 @@ class StitchAgent:
             await self._notify(request, result, config)
             return result
 
-        # Use job_id suffix to avoid branch collision when fixing multiple jobs
-        fix_id = f"{request.pipeline_id}-{request.job_id}"
+        fix_id = request.pipeline_id
+        fix_branch = f"stitch/fix-{fix_id}"
         changes = [{"path": c.path, "content": c.new_content} for c in fix_patch.changes]
 
         commit_message = (
             f"{fix_patch.commit_message}\n\nStitch-Target: {request.branch}"
         )
 
-        fix_branch = await self.adapter.create_fix_branch(
-            request=request,
-            fix_id=fix_id,
-            changes=changes,
-            commit_message=commit_message,
-        )
+        # Try creating the branch; if it already exists (multi-job pipeline),
+        # push an additional commit to the existing branch instead.
+        try:
+            fix_branch = await self.adapter.create_fix_branch(
+                request=request,
+                fix_id=fix_id,
+                changes=changes,
+                commit_message=commit_message,
+            )
+        except Exception:
+            await self.adapter.push_to_branch(
+                project_id=request.project_id,
+                branch=fix_branch,
+                changes=changes,
+                commit_message=commit_message,
+            )
 
         mr_url: str | None = None
         if create_mr:
