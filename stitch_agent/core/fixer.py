@@ -11,10 +11,10 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import anthropic
-from anthropic.types import TextBlock, ToolUseBlock
+from anthropic.types import MessageParam, TextBlock, ToolParam, ToolUseBlock
 
 from stitch_agent.models import ClassificationResult, StitchConfig, select_model
 
@@ -55,7 +55,7 @@ _SYSTEM_PROMPT = (
     "- ALWAYS produce a fix. An empty files dict means the CI stays broken.\n"
 )
 
-_TOOLS = [
+_TOOLS: list[ToolParam] = [
     {
         "name": "search_codebase",
         "description": (
@@ -258,7 +258,7 @@ class Fixer:
         request: FixRequest,
     ) -> FixPatch:
         """Agentic fix with tool use — the LLM investigates before fixing."""
-        messages: list[dict] = [{"role": "user", "content": prompt}]
+        messages: list[MessageParam] = [{"role": "user", "content": prompt}]
 
         for round_num in range(_MAX_TOOL_ROUNDS):
             response = await client.messages.create(
@@ -290,10 +290,10 @@ class Fixer:
                 break
 
             # Add assistant message with all content blocks
-            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "assistant", "content": response.content})  # type: ignore[arg-type]
 
             # Execute tools and collect results
-            tool_results = []
+            tool_results: list[dict[str, Any]] = []
             for tool_block in tool_blocks:
                 result = await _execute_tool(
                     tool_block.name, tool_block.input, adapter, request
@@ -310,7 +310,7 @@ class Fixer:
                     "content": result[:16_000],  # cap tool output
                 })
 
-            messages.append({"role": "user", "content": tool_results})
+            messages.append({"role": "user", "content": tool_results})  # type: ignore[arg-type]
 
         logger.warning("agentic fix exhausted %d tool rounds", _MAX_TOOL_ROUNDS)
         return FixPatch(
