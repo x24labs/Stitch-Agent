@@ -345,6 +345,54 @@ async def _handle_fix_failed(
     return 1
 
 
+def _error_signature(log: str) -> str:
+    """Extract a short signature from a job log for deduplication.
+
+    Looks for the core error line (e.g. "unrecognized arguments: --cov-data-file")
+    stripping variable parts like file names and coverage module names.
+    """
+    for line in reversed(log.splitlines()):
+        line = line.strip()
+        # Skip empty, timestamp-only, and generic lines
+        if not line or line.startswith(("section_", "Cleaning", "Uploading", "WARNING")):
+            continue
+        if "error" in line.lower() or "failed" in line.lower():
+            # Normalize variable parts: coverage file names, paths, line numbers
+            sig = re.sub(r"\.coverage\.\w+", ".coverage.*", line)
+            sig = re.sub(r":\d+:\d+", ":*:*", sig)
+            sig = re.sub(r"tests/\S+\.py::\S+", "tests/*", sig)
+            return sig[:200]
+    return log[-200:]
+
+
+async def _group_by_error(
+    adapter, ctx: CIContext, jobs: list[dict[str, str]],
+) -> list[tuple[dict[str, str], list[dict[str, str]]]]:
+    """Group failed jobs by error signature.
+
+    Returns a list of (representative_job, [all_jobs_in_group]) tuples.
+    Jobs with the same error signature are grouped together so we only
+    fix each unique root cause once.
+    """
+    signatures: dict[str, list[dict[str, str]]] = {}
+    for job in jobs:
+        try:
+            request = FixRequest(
+                platform=ctx.platform,
+                project_id=ctx.project_id,
+                pipeline_id=ctx.pipeline_id,
+                job_id=job["id"],
+                branch=ctx.branch,
+            )
+            log = await adapter.fetch_job_logs(request)
+            sig = _error_signature(log)
+        except Exception:
+            sig = f"__unique_{job['id']}"
+        signatures.setdefault(sig, []).append(job)
+
+    return [(group[0], group) for group in signatures.values()]
+
+
 async def _run_fix_mode(
     ctx: CIContext,
     platform: Literal["gitlab", "github"],
@@ -385,25 +433,41 @@ async def _run_fix_mode(
             )
             jobs_to_fix = jobs_to_fix[:max_jobs]
 
-        for job in jobs_to_fix:
+        # Deduplicate: group jobs by error signature so we only fix each
+        # unique root cause once instead of N times for the same error.
+        groups = await _group_by_error(adapter, ctx, jobs_to_fix)
+
+        for representative, group_jobs in groups:
+            job_names_in_group = [j["name"] or j["id"] for j in group_jobs]
+            if len(group_jobs) > 1:
+                print(
+                    f"Grouped {len(group_jobs)} jobs with same error: "
+                    f"{', '.join(job_names_in_group)}",
+                    file=sys.stderr,
+                )
+
             request = FixRequest(
                 platform=platform,
                 project_id=ctx.project_id,
                 pipeline_id=ctx.pipeline_id,
-                job_id=job["id"],
+                job_id=representative["id"],
                 branch=ctx.branch,
-                job_name=job["name"] or None,
+                job_name=representative["name"] or None,
             )
             try:
                 result = await agent.fix(request, create_mr=False)
-                results.append({"job_id": job["id"], "job_name": job["name"], **result.model_dump()})
+                result_dict = result.model_dump()
+                # Report all jobs in the group as having the same result
+                for job in group_jobs:
+                    results.append({"job_id": job["id"], "job_name": job["name"], **result_dict})
             except Exception as exc:
-                results.append({
-                    "job_id": job["id"],
-                    "job_name": job["name"],
-                    "status": "error",
-                    "reason": str(exc),
-                })
+                for job in group_jobs:
+                    results.append({
+                        "job_id": job["id"],
+                        "job_name": job["name"],
+                        "status": "error",
+                        "reason": str(exc),
+                    })
 
     if output_format == "json":
         print(json.dumps({"status": "complete", "jobs": results}, indent=2))
