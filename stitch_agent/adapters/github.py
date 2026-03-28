@@ -307,6 +307,39 @@ class GitHubAdapter(CIPlatformAdapter):
         resp.raise_for_status()
         return resp.json().get("ahead_by", 0)
 
+    async def search_codebase(
+        self, request: FixRequest, pattern: str, max_results: int = 20,
+    ) -> list[dict[str, str]]:
+        owner, repo = request.project_id.split("/", 1)
+        resp = await self._client.get(
+            "/search/code",
+            params={"q": f"{pattern}+repo:{owner}/{repo}", "per_page": max_results},
+        )
+        resp.raise_for_status()
+        results = []
+        for item in resp.json().get("items", [])[:max_results]:
+            results.append({
+                "path": item.get("path", ""),
+                "line": "",
+                "data": item.get("name", ""),
+            })
+        return results
+
+    async def list_directory(
+        self, request: FixRequest, path: str = "",
+    ) -> list[dict[str, str]]:
+        owner, repo = request.project_id.split("/", 1)
+        resp = await self._client.get(
+            f"/repos/{owner}/{repo}/contents/{path}",
+            params={"ref": request.branch},
+        )
+        resp.raise_for_status()
+        return [
+            {"name": item["name"], "type": item["type"], "path": item["path"]}
+            for item in resp.json()
+            if isinstance(item, dict)
+        ]
+
     async def aclose(self) -> None:
         await self._client.aclose()
 

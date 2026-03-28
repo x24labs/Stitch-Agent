@@ -248,6 +248,41 @@ class GitLabAdapter(CIPlatformAdapter):
             return ""
         return commits[0].get("message", "")
 
+    async def search_codebase(
+        self, request: FixRequest, pattern: str, max_results: int = 20,
+    ) -> list[dict[str, str]]:
+        resp = await self._client.get(
+            f"{self._pid(request.project_id)}/search",
+            params={
+                "scope": "blobs",
+                "search": pattern,
+                "ref": request.branch,
+                "per_page": max_results,
+            },
+        )
+        resp.raise_for_status()
+        results = []
+        for item in resp.json()[:max_results]:
+            results.append({
+                "path": item.get("filename", ""),
+                "line": str(item.get("startline", "")),
+                "data": item.get("data", "")[:200],
+            })
+        return results
+
+    async def list_directory(
+        self, request: FixRequest, path: str = "",
+    ) -> list[dict[str, str]]:
+        resp = await self._client.get(
+            f"{self._pid(request.project_id)}/repository/tree",
+            params={"path": path, "ref": request.branch, "per_page": 100},
+        )
+        resp.raise_for_status()
+        return [
+            {"name": item["name"], "type": item["type"], "path": item["path"]}
+            for item in resp.json()
+        ]
+
     async def aclose(self) -> None:
         await self._client.aclose()
 

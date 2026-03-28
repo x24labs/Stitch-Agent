@@ -46,7 +46,7 @@ class StitchAgent:
         self.sonnet_confidence_threshold = sonnet_confidence_threshold
         self.max_attempts = max_attempts
         self.escalation_callback = escalation_callback
-        self.classifier = Classifier()
+        self.classifier = Classifier(api_key=anthropic_api_key)
         self.fixer = Fixer(anthropic_api_key)
         self.pr_creator = PRCreator(adapter)
         self._api_key = anthropic_api_key
@@ -151,6 +151,8 @@ class StitchAgent:
             job_log=job_log,
             diff=diff,
             file_contents=file_contents,
+            adapter=self.adapter,
+            request=request,
         )
 
         logger.info(
@@ -294,6 +296,8 @@ class StitchAgent:
             diff=diff,
             file_contents=file_contents,
             model_override=model_override,
+            adapter=self.adapter,
+            request=request,
         )
 
         # Validate patch
@@ -349,6 +353,6 @@ class StitchAgent:
         if raw is None:
             return StitchConfig()
         config = parse_config(raw)
-        self.classifier = Classifier(config=config)
+        self.classifier = Classifier(config=config, api_key=self._api_key)
         self.fixer = Fixer(self._api_key, config=config)
         return config

@@ -67,3 +67,13 @@ class CIPlatformAdapter(ABC):
     async def count_branch_commits(
         self, project_id: str, branch: str, target_branch: str
     ) -> int: ...
+
+    @abstractmethod
+    async def search_codebase(
+        self, request: FixRequest, pattern: str, max_results: int = 20,
+    ) -> list[dict[str, str]]: ...
+
+    @abstractmethod
+    async def list_directory(
+        self, request: FixRequest, path: str = "",
+    ) -> list[dict[str, str]]: ...

@@ -1,20 +1,152 @@
+"""Agentic error classifier — uses Haiku to analyze CI job logs.
+
+Replaces regex-based classification with an LLM call for accurate
+error type detection, affected file extraction, and model selection.
+"""
+
 from __future__ import annotations
 
+import json
+import logging
 import re
-from collections import defaultdict
 
-from stitch_agent.models import ClassificationResult, ErrorType, StitchConfig
+import anthropic
+from anthropic.types import TextBlock
 
-_RULES: dict[ErrorType, list[tuple[re.Pattern[str], float]]] = {
+from stitch_agent.models import HAIKU_MODEL, ClassificationResult, ErrorType, StitchConfig
+
+logger = logging.getLogger("stitch_agent")
+
+_CLASSIFY_SYSTEM = (
+    "You are a CI/CD error classifier. Analyze the job log and classify the error.\n\n"
+    "Error types:\n"
+    "- lint: linter violations (ruff, eslint, pylint, unused imports, style)\n"
+    "- format: code formatting issues (black, prettier, isort)\n"
+    "- simple_type: basic type errors (mypy, pyright, TypeScript — simple mismatches)\n"
+    "- complex_type: advanced type errors (generics, protocols, overloads)\n"
+    "- config_ci: CI/CD configuration errors (YAML syntax, pipeline config)\n"
+    "- build: build/infrastructure errors (missing commands, bad arguments, dependency install failures)\n"
+    "- test_contract: test failures (assertion errors, broken test expectations)\n"
+    "- logic_error: runtime errors (tracebacks, exceptions, segfaults)\n"
+    "- unknown: cannot determine\n\n"
+    "Respond with JSON only:\n"
+    "{\n"
+    '  "error_type": "one of the types above",\n'
+    '  "confidence": 0.0-1.0,\n'
+    '  "summary": "one-line description of the error",\n'
+    '  "affected_files": ["file paths that need to be fixed"],\n'
+    '  "model": "haiku" or "sonnet"\n'
+    "}\n\n"
+    "Rules for affected_files:\n"
+    "- Include the ACTUAL files that need to change to fix the error.\n"
+    "- If the error is in a CI command (e.g. wrong argument to pytest), include .gitlab-ci.yml\n"
+    "- If the error references specific source files, include those.\n"
+    "- Include config files (pyproject.toml, package.json) when relevant.\n"
+    "- Do NOT include files that are only mentioned in stack traces but don't need changes.\n\n"
+    "Rules for model selection:\n"
+    "- haiku: lint, format, simple_type, config_ci, build (straightforward fixes)\n"
+    "- sonnet: complex_type, test_contract, logic_error, unknown (need deeper reasoning)\n"
+)
+
+_MAX_LOG_CHARS = 12_000
+
+
+class Classifier:
+    def __init__(self, config: StitchConfig | None = None, api_key: str = "") -> None:
+        self.config = config or StitchConfig()
+        self._api_key = api_key
+        self._client: anthropic.AsyncAnthropic | None = None
+
+    def _get_client(self) -> anthropic.AsyncAnthropic:
+        if self._client is None:
+            self._client = anthropic.AsyncAnthropic(api_key=self._api_key)
+        return self._client
+
+    async def classify(self, job_log: str, diff: str | None = None) -> ClassificationResult:
+        """Classify a CI job failure using Haiku."""
+        if not self._api_key:
+            logger.warning("No API key for agentic classifier, falling back to regex")
+            return _regex_fallback(job_log)
+
+        try:
+            return await self._llm_classify(job_log, diff)
+        except Exception as exc:
+            logger.warning("LLM classifier failed (%s), falling back to regex", exc)
+            return _regex_fallback(job_log)
+
+    async def _llm_classify(self, job_log: str, diff: str | None) -> ClassificationResult:
+        # Send the tail of the log (where errors typically are)
+        log_tail = job_log[-_MAX_LOG_CHARS:] if len(job_log) > _MAX_LOG_CHARS else job_log
+
+        prompt = f"## CI Job Log (last {len(log_tail)} chars)\n```\n{log_tail}\n```"
+        if diff:
+            prompt += f"\n\n## Diff that triggered this pipeline\n```diff\n{diff[:4000]}\n```"
+
+        client = self._get_client()
+        message = await client.messages.create(
+            model=HAIKU_MODEL,
+            max_tokens=1024,
+            system=_CLASSIFY_SYSTEM,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        raw = next((b.text for b in message.content if isinstance(b, TextBlock)), "")
+        return _parse_classification(raw)
+
+
+def _parse_classification(raw: str) -> ClassificationResult:
+    """Parse LLM classification response into ClassificationResult."""
+    text = raw.strip()
+    # Extract JSON from fences if present
+    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
+    if fence:
+        text = fence.group(1)
+    else:
+        brace = re.search(r"\{.*\}", text, re.S)
+        if brace:
+            text = brace.group(0)
+
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return ClassificationResult(
+            error_type=ErrorType.UNKNOWN,
+            confidence=0.5,
+            summary="Could not parse classifier response",
+            affected_files=[],
+        )
+
+    # Map error_type string to enum
+    error_type_str = data.get("error_type", "unknown")
+    try:
+        error_type = ErrorType(error_type_str)
+    except ValueError:
+        error_type = ErrorType.UNKNOWN
+
+    confidence = min(max(float(data.get("confidence", 0.5)), 0.0), 0.99)
+    summary = data.get("summary", "CI job failed")
+    affected_files = [f for f in data.get("affected_files", []) if isinstance(f, str)]
+
+    return ClassificationResult(
+        error_type=error_type,
+        confidence=round(confidence, 2),
+        summary=summary,
+        affected_files=affected_files[:20],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Regex fallback (used when no API key or LLM call fails)
+# ---------------------------------------------------------------------------
+
+_FALLBACK_RULES: dict[ErrorType, list[tuple[re.Pattern[str], float]]] = {
     ErrorType.FORMAT: [
         (re.compile(r"\bwould reformat\b", re.I), 1.0),
         (re.compile(r"Oh no!.*reformat", re.I | re.S), 0.9),
         (re.compile(r"isort[^:]*:.*(unsorted|error)", re.I), 1.0),
-        (re.compile(r"import should (come before|come after|be at)", re.I), 0.8),
         (re.compile(r"prettier.*(error|check)", re.I), 0.9),
         (re.compile(r"ruff format.*check|ruff.*--check.*format", re.I), 0.9),
         (re.compile(r"black.*would reformat|autoflake.*error", re.I), 0.9),
-        (re.compile(r"\b(E301|E302|E303|E304|E305|W291|W292|W293|W391)\b"), 0.8),
     ],
     ErrorType.LINT: [
         (re.compile(r"\b[EWF]\d{3,4}\b"), 1.0),
@@ -22,19 +154,12 @@ _RULES: dict[ErrorType, list[tuple[re.Pattern[str], float]]] = {
         (re.compile(r"\bpylint\b.*error|error.*\bpylint\b", re.I), 0.9),
         (re.compile(r"\beslint\b", re.I), 0.9),
         (re.compile(r":\d+:\d+: [EW]\d+ "), 0.9),
-        (re.compile(r"error: (cannot import|unused import|undefined name)", re.I), 0.8),
-        (re.compile(r"\bno-unused-vars\b|\bno-undef\b"), 0.8),
     ],
     ErrorType.SIMPLE_TYPE: [
         (re.compile(r"error: Argument \d+ .* incompatible type"), 1.0),
         (re.compile(r"error: Incompatible types in assignment"), 1.0),
         (re.compile(r"error: Item .* of .* has no attribute"), 0.9),
-        (re.compile(r"error: No overload variant .* matches argument"), 0.9),
         (re.compile(r"is not assignable to (type|parameter)", re.I), 1.0),
-        (re.compile(r"Cannot find name '", re.I), 0.9),
-        (re.compile(r"has no attribute '[\w]+'", re.I), 0.8),
-        (re.compile(r"\bTS\(?\d{4}\)?\b", re.IGNORECASE), 0.9),
-        (re.compile(r"error\[E0\d{3}\]"), 0.8),
         (re.compile(r"mypy.*: error|pyright.*: error", re.I), 0.6),
     ],
     ErrorType.CONFIG_CI: [
@@ -42,25 +167,22 @@ _RULES: dict[ErrorType, list[tuple[re.Pattern[str], float]]] = {
         (re.compile(r"\.github/workflows/.*\.ya?ml"), 1.0),
         (re.compile(r"ci(\/cd)? configuration.*(error|invalid|missing)", re.I), 0.9),
         (re.compile(r"yaml.*(syntax error|is invalid)|syntax error.*yaml", re.I), 0.9),
-        (re.compile(r"pipeline.*configuration.*(invalid|error)", re.I), 0.9),
-        (re.compile(r"job .* (is not defined|doesn.t exist)", re.I), 0.9),
-        (re.compile(r"unknown key(s)? in .* config", re.I), 0.8),
-        (re.compile(r"stage .* is not defined", re.I), 0.8),
     ],
-    ErrorType.COMPLEX_TYPE: [
-        (re.compile(r"Cannot use .* as a (generic|base) type", re.I), 1.0),
-        (re.compile(r"Protocol .* not satisfied|does not satisfy Protocol", re.I), 1.0),
-        (re.compile(r"Overloaded .* implementation is not compatible", re.I), 0.9),
-        (re.compile(r"TypeVar .* bound|covariant|contravariant", re.I), 0.8),
-        (re.compile(r"Multiple overloads|overload.*ambiguous", re.I), 0.9),
-        (re.compile(r"error: Unsupported left operand type", re.I), 0.8),
+    ErrorType.BUILD: [
+        (re.compile(r"/bin/(?:sh|bash):.*not found", re.I), 1.0),
+        (re.compile(r"\bcommand not found\b", re.I), 0.9),
+        (re.compile(r"\b(?:apt-get|apt|apk|yum|dnf|brew)\b.*(?:error|not found|failed)", re.I), 1.0),
+        (re.compile(r"\b(?:npm|yarn|bun|pip|pip3)\b.*(?:error|failed|not found)", re.I), 0.9),
+        (re.compile(r"curl:\s*\(\d+\)\s", re.I), 0.9),
+        (re.compile(r"\bCOPY failed\b|\bRUN returned non-zero exit code\b", re.I), 1.0),
+        (re.compile(r"\bdocker\b.*(?:error|failed|denied)", re.I), 0.8),
+        (re.compile(r"error: unrecognized arguments?:", re.I), 1.0),
+        (re.compile(r"(?:pytest|python|node|npm|go): error:", re.I), 0.9),
     ],
     ErrorType.TEST_CONTRACT: [
         (re.compile(r"FAILED\s+\S+\.py::"), 1.0),
         (re.compile(r"\bAssertionError\b"), 1.0),
         (re.compile(r"\d+ failed(?:, \d+ passed)?"), 0.9),
-        (re.compile(r"^E\s+assert ", re.M), 0.9),
-        (re.compile(r"Expected\s+.*\s+but\s+(got|was)\s+", re.I | re.S), 0.8),
         (re.compile(r"pytest.*\d+ error", re.I), 0.7),
     ],
     ErrorType.LOGIC_ERROR: [
@@ -68,25 +190,6 @@ _RULES: dict[ErrorType, list[tuple[re.Pattern[str], float]]] = {
         (re.compile(r"\b(AttributeError|NameError|TypeError|IndexError|KeyError): "), 1.0),
         (re.compile(r"\b(ModuleNotFoundError|ImportError): "), 1.0),
         (re.compile(r"\b(RuntimeError|ValueError|OverflowError|ZeroDivisionError): "), 0.9),
-        (re.compile(r"SIGSEGV|Segmentation fault|core dumped", re.I), 0.9),
-        (re.compile(r"Process finished with exit code [^0]"), 0.6),
-    ],
-    ErrorType.BUILD: [
-        (re.compile(r"/bin/(?:sh|bash):.*not found", re.I), 1.0),
-        (re.compile(r"\bcommand not found\b", re.I), 0.9),
-        (
-            re.compile(r"\b(?:apt-get|apt|apk|yum|dnf|brew)\b.*(?:error|not found|failed)", re.I),
-            1.0,
-        ),
-        (re.compile(r"\b(?:npm|yarn|bun|pip|pip3)\b.*(?:error|failed|not found)", re.I), 0.9),
-        (re.compile(r"returned a non-zero exit code", re.I), 0.8),
-        (re.compile(r"curl:\s*\(\d+\)\s", re.I), 0.9),
-        (re.compile(r"\bCOPY failed\b|\bRUN returned non-zero exit code\b", re.I), 1.0),
-        (re.compile(r"\bdocker\b.*(?:error|failed|denied)", re.I), 0.8),
-        # Tool invocation / argument errors (pytest, node, etc.)
-        (re.compile(r"error: unrecognized arguments?:", re.I), 1.0),
-        (re.compile(r"(?:pytest|python|node|npm|go): error:", re.I), 0.9),
-        (re.compile(r"ERROR: usage:", re.I), 0.8),
     ],
 }
 
@@ -102,22 +205,16 @@ _STANDALONE_FILE_RE = re.compile(
     r"(?::\d+)?(?:$|[\s:])",
     re.M,
 )
-
-# Pytest traceback: "  File "/app/src/foo/bar.py", line 42, in func"
 _TRACEBACK_FILE_RE = re.compile(
     r'File "(?:/[^"]*?/)?'
     r"((?:src|lib|app|scrapers|tests|pkg|internal|cmd)/[^\"]+\.py)"
     r'", line \d+',
     re.M,
 )
-
-# ModuleNotFoundError: No module named 'scrapers.utils'
 _MODULE_NOT_FOUND_RE = re.compile(
     r"(?:ModuleNotFoundError|ImportError):.*['\"](\w+(?:\.\w+)*)['\"]",
     re.M,
 )
-
-# pytest collection error: "ERROR collecting tests/test_foo.py"
 _PYTEST_COLLECT_RE = re.compile(
     r"ERROR\s+collecting\s+([\w/.-]+\.py)",
     re.M,
@@ -125,89 +222,70 @@ _PYTEST_COLLECT_RE = re.compile(
 
 
 def _module_to_paths(module: str) -> list[str]:
-    """Convert a dotted module name to likely file paths."""
     parts = module.split(".")
     base = "/".join(parts)
-    return [
-        f"{base}.py",
-        f"{base}/__init__.py",
-        f"src/{base}.py",
-        f"src/{base}/__init__.py",
-    ]
+    return [f"{base}.py", f"{base}/__init__.py", f"src/{base}.py", f"src/{base}/__init__.py"]
 
 
-class Classifier:
-    def __init__(self, config: StitchConfig | None = None) -> None:
-        self.config = config or StitchConfig()
+def _regex_fallback(job_log: str) -> ClassificationResult:
+    """Regex fallback when LLM is unavailable."""
+    from collections import defaultdict
 
-    async def classify(self, job_log: str, diff: str | None = None) -> ClassificationResult:
-        scores: dict[ErrorType, float] = defaultdict(float)
-        affected_files: set[str] = set()
-        lines = job_log.splitlines()
+    scores: dict[ErrorType, float] = defaultdict(float)
+    affected_files: set[str] = set()
 
-        for line in lines:
-            for m in _FILE_REF_RE.finditer(line):
-                affected_files.add(m.group(1).strip())
-            for m in _STANDALONE_FILE_RE.finditer(line):
-                affected_files.add(m.group(1).strip())
-
-            for error_type, rules in _RULES.items():
-                for pattern, weight in rules:
-                    if not (pattern.flags & re.S) and pattern.search(line):
-                        scores[error_type] += weight
-
-        for error_type, rules in _RULES.items():
+    for line in job_log.splitlines():
+        for m in _FILE_REF_RE.finditer(line):
+            affected_files.add(m.group(1).strip())
+        for m in _STANDALONE_FILE_RE.finditer(line):
+            affected_files.add(m.group(1).strip())
+        for error_type, rules in _FALLBACK_RULES.items():
             for pattern, weight in rules:
-                if pattern.flags & re.S and pattern.search(job_log):
-                    scores[error_type] += weight * 0.3
+                if not (pattern.flags & re.S) and pattern.search(line):
+                    scores[error_type] += weight
 
-        # Extract source files from pytest tracebacks (not just test files)
-        for m in _TRACEBACK_FILE_RE.finditer(job_log):
-            affected_files.add(m.group(1))
+    # Multi-line patterns
+    for error_type, rules in _FALLBACK_RULES.items():
+        for pattern, weight in rules:
+            if pattern.flags & re.S and pattern.search(job_log):
+                scores[error_type] += weight * 0.3
 
-        # Extract files from collection errors
-        for m in _PYTEST_COLLECT_RE.finditer(job_log):
-            affected_files.add(m.group(1))
+    # Extract files from tracebacks, collection errors, module-not-found
+    for m in _TRACEBACK_FILE_RE.finditer(job_log):
+        affected_files.add(m.group(1))
+    for m in _PYTEST_COLLECT_RE.finditer(job_log):
+        affected_files.add(m.group(1))
+    for m in _MODULE_NOT_FOUND_RE.finditer(job_log):
+        for path in _module_to_paths(m.group(1)):
+            affected_files.add(path)
 
-        # Convert module-not-found errors to file paths
-        for m in _MODULE_NOT_FOUND_RE.finditer(job_log):
-            for path in _module_to_paths(m.group(1)):
-                affected_files.add(path)
+    if any(kw in job_log for kw in ("ModuleNotFoundError", "ImportError", "pip install", "No module named")):
+        affected_files.update(["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"])
 
-        # Also check pyproject.toml/setup.cfg when we see install/import errors
-        if any(kw in job_log for kw in ("ModuleNotFoundError", "ImportError", "pip install", "No module named")):
-            affected_files.update(["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"])
-
-        # Include CI config when errors come from tool invocation / unrecognized arguments
-        if any(kw in job_log for kw in ("unrecognized arguments", "ERROR: usage:", "invalid choice:")):
-            affected_files.update([".gitlab-ci.yml", ".github/workflows"])
-
-        if not scores:
-            return ClassificationResult(
-                error_type=ErrorType.UNKNOWN,
-                confidence=0.5,
-                summary="No recognizable error patterns found in job log",
-                affected_files=sorted(affected_files)[:20],
-            )
-
-        best_type = max(scores, key=lambda t: scores[t])
-        total_score = sum(scores.values())
-        raw_confidence = scores[best_type] / total_score if total_score > 0 else 0.5
-        confidence = min(raw_confidence * 1.05, 0.99)
-
-        summary = _extract_summary(best_type, lines)
+    if not scores:
         return ClassificationResult(
-            error_type=best_type,
-            confidence=round(confidence, 2),
-            summary=summary,
+            error_type=ErrorType.UNKNOWN,
+            confidence=0.5,
+            summary="No recognizable error patterns found in job log",
             affected_files=sorted(affected_files)[:20],
         )
 
+    best_type = max(scores, key=lambda t: scores[t])
+    total = sum(scores.values())
+    confidence = min((scores[best_type] / total) * 1.05, 0.99) if total > 0 else 0.5
 
-def _extract_summary(error_type: ErrorType, lines: list[str]) -> str:
+    # Extract summary
     error_re = re.compile(r"\b(error|fail|warning|FAIL|ERROR)\b", re.I)
-    error_lines = [ln.strip() for ln in lines if error_re.search(ln)][:5]
+    error_lines = [ln.strip() for ln in job_log.splitlines() if error_re.search(ln)][:5]
     if error_lines:
         snippet = "; ".join(ln[:120] for ln in error_lines[:3])
-        return f"[{error_type.value}] {snippet}"
-    return f"[{error_type.value}] CI job failed"
+        summary = f"[{best_type.value}] {snippet}"
+    else:
+        summary = f"[{best_type.value}] CI job failed"
+
+    return ClassificationResult(
+        error_type=best_type,
+        confidence=round(confidence, 2),
+        summary=summary,
+        affected_files=sorted(affected_files)[:20],
+    )

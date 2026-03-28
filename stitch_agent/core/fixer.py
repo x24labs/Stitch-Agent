@@ -1,106 +1,115 @@
+"""Agentic fixer — uses tool use to investigate and fix CI failures.
+
+Instead of a single-shot LLM call with pre-fetched files, the fixer
+gives the LLM tools to search, read, and explore the codebase so it
+can find and fix the root cause autonomously.
+"""
+
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import anthropic
-from anthropic.types import TextBlock
+from anthropic.types import TextBlock, ToolUseBlock
 
-from stitch_agent.models import ClassificationResult, ErrorType, StitchConfig, select_model
+from stitch_agent.models import ClassificationResult, StitchConfig, select_model
 
-_BASE_PREAMBLE = (
+if TYPE_CHECKING:
+    from stitch_agent.adapters.base import CIPlatformAdapter
+    from stitch_agent.models import FixRequest
+
+logger = logging.getLogger("stitch_agent")
+
+_MAX_TOOL_ROUNDS = 15
+_MAX_LOG_LINES = 200
+
+_SYSTEM_PROMPT = (
     "You are stitch-agent, an AI that autonomously fixes CI pipeline failures.\n"
-    "Your task: analyze a failed CI job and produce a minimal, correct fix.\n\n"
-)
-
-_RESPONSE_FORMAT = (
-    "Response format (strict JSON, no markdown):\n"
+    "You have tools to investigate the codebase. Use them to understand the error,\n"
+    "find the relevant files, and produce a minimal fix.\n\n"
+    "Workflow:\n"
+    "1. Read the error log carefully to understand what failed.\n"
+    "2. Use search_codebase to find where the problematic code/config lives.\n"
+    "3. Use read_file to read the files you need to understand and fix.\n"
+    "4. Once you understand the root cause, produce the fix.\n\n"
+    "When you are ready to produce the fix, respond with JSON (no tools):\n"
     "{\n"
     '  "files": {\n'
-    '    "path/to/file.py": "complete new file content"\n'
+    '    "path/to/file": "complete new file content"\n'
     "  },\n"
-    '  "commit_message": "fix(scope): description of the fix",\n'
-    '  "explanation": "Two sentences: what was wrong and how it was fixed."\n'
+    '  "commit_message": "fix(scope): description",\n'
+    '  "explanation": "What was wrong and how it was fixed."\n'
     "}\n\n"
-    "Only include files that need to change. The files dict must contain COMPLETE new content.\n"
-    "IMPORTANT: Do NOT include line numbers in the file content — output raw source only.\n"
-    "If the fix is truly impossible (would require wholesale architecture changes), "
-    "return an empty files dict and explain why."
-)
-
-_STRICT_CONSTRAINTS = (
     "Rules:\n"
-    "1. Fix ONLY the specific error shown in the logs. Do not refactor unrelated code.\n"
-    "2. Do not add new dependencies.\n"
-    "3. Output must be a valid JSON object — no prose, no markdown fences.\n"
-    "4. Commit message must follow Conventional Commits: fix(scope): description\n"
-    "5. Be conservative: smallest change that fixes the error.\n\n"
-    "CRITICAL constraints — violating these will break other code:\n"
-    "- NEVER change function signatures (parameter names, types, count, or defaults).\n"
-    "- NEVER change type definitions, interfaces, or exported types.\n"
-    "- NEVER rename or remove exports that other files may import.\n"
-    "- NEVER modify lines unrelated to the error, even if they look improvable.\n"
-    "- Only touch the exact lines that cause the reported error.\n"
-    "- If fixing the error requires changing a function signature, that means the fix is\n"
-    "  too complex — return an empty files dict and explain why in the explanation field.\n\n"
+    "- Fix ONLY the specific error shown in the logs.\n"
+    "- The files dict must contain COMPLETE new content for each file you change.\n"
+    "- Do NOT include line numbers in file content.\n"
+    "- Commit message must follow Conventional Commits: fix(scope): description\n"
+    "- Be conservative: smallest change that fixes the error.\n"
+    "- If the error comes from a CI command (wrong argument, missing tool), fix the CI config.\n"
+    "- If the fix is truly impossible, return an empty files dict and explain why.\n"
+    "- ALWAYS produce a fix. An empty files dict means the CI stays broken.\n"
 )
 
-_TEST_CONSTRAINTS = (
-    "Rules:\n"
-    "1. Fix the specific error shown in the logs. Focus on the root cause, not symptoms.\n"
-    "2. Output must be a valid JSON object — no prose, no markdown fences.\n"
-    "3. Commit message must follow Conventional Commits: fix(scope): description\n"
-    "4. Prefer fixing SOURCE code over modifying tests, unless the test itself is wrong.\n"
-    "5. You MAY add missing imports if the error is an ImportError or NameError.\n"
-    "6. You MAY fix function calls if arguments are wrong (missing, extra, wrong type).\n"
-    "7. Do NOT refactor unrelated code or make stylistic changes.\n"
-    "8. Do NOT add new external package dependencies (stdlib and existing deps are fine).\n\n"
-    "Strategy for test failures:\n"
-    "- Read the traceback carefully to identify the SOURCE file and line that fails.\n"
-    "- If the test shows an ImportError/ModuleNotFoundError, fix the import path or\n"
-    "  ensure the module exists with the expected symbols.\n"
-    "- If the test shows AttributeError/NameError, fix the missing attribute/name in\n"
-    "  the source file.\n"
-    "- If an assertion fails because of changed behavior, fix the source code to\n"
-    "  match the expected contract, NOT the test.\n"
-    "- ALWAYS produce a fix. An empty files dict means the CI stays broken.\n\n"
-)
+_TOOLS = [
+    {
+        "name": "search_codebase",
+        "description": (
+            "Search for a pattern in the codebase. Returns matching file paths, "
+            "line numbers, and snippets. Use this to find where a specific string, "
+            "flag, function, or config option is defined or used."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Search pattern (e.g. '--cov-data-file', 'def broken_func', 'COVERAGE_FILE')",
+                },
+            },
+            "required": ["pattern"],
+        },
+    },
+    {
+        "name": "read_file",
+        "description": (
+            "Read the full content of a file. Use this to understand the code "
+            "before producing a fix. Returns the file content with line numbers."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path relative to repo root (e.g. '.gitlab-ci.yml', 'src/main.py')",
+                },
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "list_directory",
+        "description": (
+            "List files and directories at a given path. Use this to explore "
+            "the repository structure when you need to find config files or source directories."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Directory path (empty string for repo root)",
+                },
+            },
+            "required": ["path"],
+        },
+    },
+]
 
-_BUILD_CONSTRAINTS = (
-    "Rules:\n"
-    "1. Fix the specific build/infrastructure error shown in the logs.\n"
-    "2. Output must be a valid JSON object — no prose, no markdown fences.\n"
-    "3. Commit message must follow Conventional Commits: fix(scope): description\n"
-    "4. You MAY modify config files (pyproject.toml, setup.cfg, requirements.txt,\n"
-    "   Dockerfile, .gitlab-ci.yml, package.json) to fix build issues.\n"
-    "5. You MAY add missing dependencies to pyproject.toml/requirements.txt if the\n"
-    "   error is a missing package.\n"
-    "6. You MAY fix shell commands, paths, or environment setup in CI config.\n"
-    "7. Do NOT modify source code unless the build error originates from source.\n"
-    "8. ALWAYS produce a fix. An empty files dict means the CI stays broken.\n\n"
-)
-
-_CONSTRAINT_MAP: dict[ErrorType, str] = {
-    ErrorType.LINT: _STRICT_CONSTRAINTS,
-    ErrorType.FORMAT: _STRICT_CONSTRAINTS,
-    ErrorType.SIMPLE_TYPE: _STRICT_CONSTRAINTS,
-    ErrorType.CONFIG_CI: _BUILD_CONSTRAINTS,
-    ErrorType.BUILD: _BUILD_CONSTRAINTS,
-    ErrorType.COMPLEX_TYPE: _TEST_CONSTRAINTS,
-    ErrorType.TEST_CONTRACT: _TEST_CONSTRAINTS,
-    ErrorType.LOGIC_ERROR: _TEST_CONSTRAINTS,
-    ErrorType.UNKNOWN: _TEST_CONSTRAINTS,
-}
-
-
-def _get_system_prompt(error_type: ErrorType) -> str:
-    constraints = _CONSTRAINT_MAP.get(error_type, _STRICT_CONSTRAINTS)
-    return f"{_BASE_PREAMBLE}{constraints}{_RESPONSE_FORMAT}"
-
-_MAX_LOG_LINES = 200
-_MAX_FILE_CHARS = 48_000
 
 _ERROR_SECTION_RE = re.compile(
     r"("
@@ -112,17 +121,15 @@ _ERROR_SECTION_RE = re.compile(
     r"|AttributeError|KeyError|ValueError|RuntimeError|FileNotFoundError)\b"
     r"|={3,}\s*(ERRORS|FAILURES|short test summary)"
     r"|\d+ (failed|error)"
+    r"|error: unrecognized arguments?"
+    r"|pytest: error:"
     r")",
     re.M | re.I,
 )
 
 
 def _smart_truncate_log(job_log: str, max_lines: int = _MAX_LOG_LINES) -> str:
-    """Truncate log preserving error/traceback sections.
-
-    Instead of blindly keeping first 20 + last 130 lines, identifies
-    error-relevant sections and prioritizes them.
-    """
+    """Truncate log preserving error/traceback sections."""
     lines = job_log.splitlines()
     if len(lines) <= max_lines:
         return job_log
@@ -130,17 +137,14 @@ def _smart_truncate_log(job_log: str, max_lines: int = _MAX_LOG_LINES) -> str:
     important_indices: set[int] = set()
     for i, line in enumerate(lines):
         if _ERROR_SECTION_RE.search(line):
-            # Keep context: 3 lines before, 5 lines after each error line
             for j in range(max(0, i - 3), min(len(lines), i + 6)):
                 important_indices.add(j)
 
-    # Always keep first 10 (setup/env) and last 20 (summary) lines
     head = set(range(min(10, len(lines))))
     tail = set(range(max(0, len(lines) - 20), len(lines)))
     important_indices = head | important_indices | tail
 
     if len(important_indices) > max_lines:
-        # Too many important lines — fall back to prioritizing error sections + tail
         sorted_idx = sorted(important_indices)
         important_indices = set(sorted_idx[-max_lines:])
         important_indices |= head
@@ -191,57 +195,165 @@ class Fixer:
         file_contents: dict[str, str] | None = None,
         *,
         model_override: str | None = None,
+        adapter: CIPlatformAdapter | None = None,
+        request: FixRequest | None = None,
     ) -> FixPatch:
         model = model_override or select_model(classification.error_type)
-        system_prompt = _get_system_prompt(classification.error_type)
-        prompt = _build_prompt(classification, job_log, diff, file_contents or {})
         client = self._get_client()
+
+        # Build initial prompt with error context
+        truncated_log = _smart_truncate_log(job_log)
+        prompt = (
+            f"## Error classification\n"
+            f"Type: {classification.error_type.value}\n"
+            f"Confidence: {classification.confidence:.0%}\n"
+            f"Summary: {classification.summary}\n"
+            f"Affected files: {', '.join(classification.affected_files) or 'unknown'}\n"
+            f"\n## Failed job log\n```\n{truncated_log}\n```"
+            f"\n\n## Diff that triggered this pipeline\n"
+            f"```diff\n{diff or '(no diff available)'}\n```"
+        )
+
+        # If we have pre-fetched files (fallback mode without adapter), include them
+        if file_contents and not adapter:
+            parts = []
+            for path, content in file_contents.items():
+                numbered = []
+                for i, line in enumerate(content[:48_000].splitlines(), 1):
+                    numbered.append(f"{i:>4}| {line}")
+                parts.append(f"### {path}\n```\n" + "\n".join(numbered) + "\n```")
+            prompt += (
+                "\n\n## File contents (line numbers for reference"
+                " — do NOT include in output)\n" + "\n\n".join(parts)
+            )
+
+        prompt += "\n\nInvestigate the error and produce the minimal fix."
+
+        # If adapter available, use agentic tool-use mode
+        if adapter and request:
+            return await self._agentic_fix(client, model, prompt, adapter, request)
+
+        # Fallback: single-shot (backward compatible)
+        return await self._single_shot_fix(client, model, prompt)
+
+    async def _single_shot_fix(
+        self, client: anthropic.AsyncAnthropic, model: str, prompt: str,
+    ) -> FixPatch:
+        """Single-shot fix without tools (backward compatible)."""
         message = await client.messages.create(
             model=model,
             max_tokens=16_384,
-            system=system_prompt,
+            system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = next((b.text for b in message.content if isinstance(b, TextBlock)), "")
         return _parse_response(raw)
 
+    async def _agentic_fix(
+        self,
+        client: anthropic.AsyncAnthropic,
+        model: str,
+        prompt: str,
+        adapter: CIPlatformAdapter,
+        request: FixRequest,
+    ) -> FixPatch:
+        """Agentic fix with tool use — the LLM investigates before fixing."""
+        messages: list[dict] = [{"role": "user", "content": prompt}]
 
-def _build_prompt(
-    classification: ClassificationResult,
-    job_log: str,
-    diff: str,
-    file_contents: dict[str, str],
+        for round_num in range(_MAX_TOOL_ROUNDS):
+            response = await client.messages.create(
+                model=model,
+                max_tokens=16_384,
+                system=_SYSTEM_PROMPT,
+                messages=messages,
+                tools=_TOOLS,
+            )
+
+            # Check if the LLM is done (produced text with the fix)
+            if response.stop_reason == "end_turn":
+                raw = next(
+                    (b.text for b in response.content if isinstance(b, TextBlock)), ""
+                )
+                if raw:
+                    logger.info("agentic fix completed after %d tool rounds", round_num)
+                    return _parse_response(raw)
+
+            # Process tool calls
+            tool_blocks = [b for b in response.content if isinstance(b, ToolUseBlock)]
+            if not tool_blocks:
+                # No tools and no text — extract any text we can
+                raw = next(
+                    (b.text for b in response.content if isinstance(b, TextBlock)), ""
+                )
+                if raw:
+                    return _parse_response(raw)
+                break
+
+            # Add assistant message with all content blocks
+            messages.append({"role": "assistant", "content": response.content})
+
+            # Execute tools and collect results
+            tool_results = []
+            for tool_block in tool_blocks:
+                result = await _execute_tool(
+                    tool_block.name, tool_block.input, adapter, request
+                )
+                logger.debug(
+                    "tool %s(%s) → %d chars",
+                    tool_block.name,
+                    json.dumps(tool_block.input)[:100],
+                    len(result),
+                )
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tool_block.id,
+                    "content": result[:16_000],  # cap tool output
+                })
+
+            messages.append({"role": "user", "content": tool_results})
+
+        logger.warning("agentic fix exhausted %d tool rounds", _MAX_TOOL_ROUNDS)
+        return FixPatch(
+            changes=[],
+            commit_message="fix: automated fix by stitch-agent",
+            explanation="Exhausted tool rounds without producing a fix",
+        )
+
+
+async def _execute_tool(
+    name: str, input_data: dict, adapter: CIPlatformAdapter, request: FixRequest,
 ) -> str:
-    truncated_log = _smart_truncate_log(job_log)
+    """Execute a tool call and return the result as a string."""
+    try:
+        if name == "search_codebase":
+            results = await adapter.search_codebase(request, input_data["pattern"])
+            if not results:
+                return "No results found."
+            lines = []
+            for r in results:
+                line_info = f":{r['line']}" if r.get("line") else ""
+                lines.append(f"{r['path']}{line_info}: {r.get('data', '')}")
+            return "\n".join(lines)
 
-    files_section = ""
-    if file_contents:
-        parts = []
-        for path, content in file_contents.items():
-            truncated = content[:_MAX_FILE_CHARS]
-            was_truncated = len(content) > _MAX_FILE_CHARS
-            # Add line numbers so the LLM can locate error lines from the log
+        if name == "read_file":
+            content = await adapter.fetch_file_content(request, input_data["path"])
+            # Add line numbers for reference
             numbered = []
-            for i, line in enumerate(truncated.splitlines(), 1):
+            for i, line in enumerate(content.splitlines(), 1):
                 numbered.append(f"{i:>4}| {line}")
-            display = "\n".join(numbered)
-            if was_truncated:
-                display += "\n... (truncated)"
-            parts.append(f"### {path}\n```\n{display}\n```")
-        files_section = "\n\n## Current file contents (line numbers for reference only — do NOT include them in output)\n" + "\n\n".join(parts)
+            return "\n".join(numbered)
 
-    affected = ", ".join(classification.affected_files) or "unknown"
-    return (
-        f"## Error classification\n"
-        f"Type: {classification.error_type.value}\n"
-        f"Confidence: {classification.confidence:.0%}\n"
-        f"Summary: {classification.summary}\n"
-        f"Affected files: {affected}\n"
-        f"\n## Failed job log\n```\n{truncated_log}\n```"
-        f"\n\n## Diff that triggered this pipeline\n```diff\n{diff or '(no diff available)'}\n```"
-        f"{files_section}"
-        f"\n\nAnalyze the error and produce the minimal fix. Respond with JSON only."
-    )
+        if name == "list_directory":
+            items = await adapter.list_directory(request, input_data.get("path", ""))
+            lines = []
+            for item in items:
+                prefix = "dir  " if item["type"] == "tree" else "file "
+                lines.append(f"{prefix}{item['path']}")
+            return "\n".join(lines) or "Empty directory."
+
+        return f"Unknown tool: {name}"
+    except Exception as exc:
+        return f"Error: {exc}"
 
 
 def _parse_response(raw: str) -> FixPatch:
