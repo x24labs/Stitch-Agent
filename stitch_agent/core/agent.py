@@ -193,7 +193,8 @@ class StitchAgent:
             await self._notify(request, result, config)
             return result
 
-        fix_id = request.pipeline_id
+        # Use job_id suffix to avoid branch collision when fixing multiple jobs
+        fix_id = f"{request.pipeline_id}-{request.job_id}"
         changes = [{"path": c.path, "content": c.new_content} for c in fix_patch.changes]
 
         commit_message = (

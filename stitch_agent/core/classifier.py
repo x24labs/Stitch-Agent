@@ -83,6 +83,10 @@ _RULES: dict[ErrorType, list[tuple[re.Pattern[str], float]]] = {
         (re.compile(r"curl:\s*\(\d+\)\s", re.I), 0.9),
         (re.compile(r"\bCOPY failed\b|\bRUN returned non-zero exit code\b", re.I), 1.0),
         (re.compile(r"\bdocker\b.*(?:error|failed|denied)", re.I), 0.8),
+        # Tool invocation / argument errors (pytest, node, etc.)
+        (re.compile(r"error: unrecognized arguments?:", re.I), 1.0),
+        (re.compile(r"(?:pytest|python|node|npm|go): error:", re.I), 0.9),
+        (re.compile(r"ERROR: usage:", re.I), 0.8),
     ],
 }
 
@@ -173,6 +177,10 @@ class Classifier:
         # Also check pyproject.toml/setup.cfg when we see install/import errors
         if any(kw in job_log for kw in ("ModuleNotFoundError", "ImportError", "pip install", "No module named")):
             affected_files.update(["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"])
+
+        # Include CI config when errors come from tool invocation / unrecognized arguments
+        if any(kw in job_log for kw in ("unrecognized arguments", "ERROR: usage:", "invalid choice:")):
+            affected_files.update([".gitlab-ci.yml", ".github/workflows"])
 
         if not scores:
             return ClassificationResult(
