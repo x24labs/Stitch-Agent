@@ -304,3 +304,43 @@ export { languages, defaultLang, getDir, getDirMultiplier, getLangUrl, t };
     # Should catch multiple violations
     assert "diff_ratio" in checks  # Full rewrite
     assert "export_removed" in checks  # isRtl, locales removed
+
+
+# --- Relaxed mode for test/build errors ---
+
+def test_relaxed_mode_allows_new_imports() -> None:
+    from stitch_agent.models import ErrorType
+
+    original = "def foo():\n    return 1\n"
+    new_content = "import os\n\ndef foo():\n    return os.getenv('X', '1')\n"
+    patch = _make_patch("src/foo.py", new_content)
+    config = ValidationConfig(block_new_imports=True)
+    result = PatchValidator(config).validate(
+        patch, {"src/foo.py": original}, ErrorType.TEST_CONTRACT
+    )
+    # Relaxed mode should skip import check
+    assert not any(v.check == "new_import" for v in result.violations)
+
+
+def test_relaxed_mode_allows_missing_original() -> None:
+    from stitch_agent.models import ErrorType
+
+    patch = _make_patch("pyproject.toml", "[project]\nname='x'\n")
+    result = PatchValidator().validate(
+        patch, {}, ErrorType.BUILD
+    )
+    # Relaxed mode should not fail on missing original
+    assert not any(v.check == "missing_original" for v in result.violations)
+
+
+def test_strict_mode_blocks_new_imports() -> None:
+    from stitch_agent.models import ErrorType
+
+    original = "def foo():\n    return 1\n"
+    new_content = "import os\n\ndef foo():\n    return os.getenv('X', '1')\n"
+    patch = _make_patch("src/foo.py", new_content)
+    config = ValidationConfig(block_new_imports=True)
+    result = PatchValidator(config).validate(
+        patch, {"src/foo.py": original}, ErrorType.LINT
+    )
+    assert any(v.check == "new_import" for v in result.violations)

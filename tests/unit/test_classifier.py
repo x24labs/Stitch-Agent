@@ -172,3 +172,35 @@ async def test_build_does_not_match_python_traceback(clf: Classifier) -> None:
     )
     result = await clf.classify(log)
     assert result.error_type == ErrorType.LOGIC_ERROR
+
+
+async def test_traceback_extracts_source_files(clf: Classifier) -> None:
+    log = (
+        "FAILED tests/test_settings.py::test_load_config\n"
+        "Traceback (most recent call last):\n"
+        '  File "/app/src/scrapers/settings.py", line 15, in load\n'
+        "    return config['key']\n"
+        "KeyError: 'key'\n"
+    )
+    result = await clf.classify(log)
+    assert any("src/scrapers/settings.py" in f for f in result.affected_files)
+
+
+async def test_module_not_found_extracts_file_paths(clf: Classifier) -> None:
+    log = (
+        "ERROR collecting tests/test_utils.py\n"
+        "ModuleNotFoundError: No module named 'scrapers.utils'\n"
+    )
+    result = await clf.classify(log)
+    assert any("scrapers/utils.py" in f for f in result.affected_files)
+    assert "pyproject.toml" in result.affected_files
+
+
+async def test_collection_error_extracts_test_file(clf: Classifier) -> None:
+    log = (
+        "ERROR collecting tests/test_workers.py\n"
+        "ImportError: cannot import name 'WorkerPool' from 'scrapers.workers'\n"
+    )
+    result = await clf.classify(log)
+    assert "tests/test_workers.py" in result.affected_files
+    assert any("scrapers/workers" in f for f in result.affected_files)

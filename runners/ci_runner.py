@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import re
 import sys
@@ -23,6 +24,15 @@ from typing import Literal
 from stitch_agent.core.agent import StitchAgent
 from stitch_agent.models import FixRequest
 from stitch_agent.settings import StitchSettings
+
+
+def _setup_logging(verbose: bool) -> None:
+    level = logging.DEBUG if verbose else logging.INFO
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("[stitch] %(levelname)s %(message)s"))
+    logger = logging.getLogger("stitch_agent")
+    logger.setLevel(level)
+    logger.addHandler(handler)
 
 _STITCH_BRANCH_RE = re.compile(r"^stitch/fix-")
 _TARGET_RE = re.compile(r"^Stitch-Target:\s*(.+)$", re.M)
@@ -196,7 +206,7 @@ async def _handle_fix_verified(
         f"CI passed on the fix branch — this fix has been verified.\n\n"
         f"---\n"
         f"*This MR was created automatically by "
-        f"[stitch-agent](https://github.com/g24r/stitch).*"
+        f"[stitch-agent](https://git.g24r.com/x24labs/stitch/library).*"
     )
 
     request = FixRequest(
@@ -407,7 +417,9 @@ async def run_ci(
     output_format: str = "text",
     platform_override: str | None = None,
     max_jobs: int = 5,
+    verbose: bool = False,
 ) -> int:
+    _setup_logging(verbose or os.environ.get("STITCH_VERBOSE", "") == "1")
     platform = detect_platform(platform_override)
     ctx = build_context(platform)
     settings = StitchSettings()

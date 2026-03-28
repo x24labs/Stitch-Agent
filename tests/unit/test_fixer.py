@@ -134,3 +134,27 @@ async def test_generate_fix_selects_haiku_for_lint() -> None:
 def test_file_change_default_action() -> None:
     fc = FileChange(path="foo.py", new_content="x = 1\n")
     assert fc.action == "update"
+
+
+def test_smart_truncate_preserves_errors() -> None:
+    from stitch_agent.core.fixer import _smart_truncate_log
+
+    lines = ["setup line"] * 50
+    lines += ["FAILED tests/test_foo.py::test_bar - AssertionError: x != y"]
+    lines += ["E       assert 1 == 2"]
+    lines += ["normal line"] * 200
+    lines += ["1 failed, 10 passed"]
+    log = "\n".join(lines)
+
+    result = _smart_truncate_log(log, max_lines=80)
+    assert "FAILED tests/test_foo.py" in result
+    assert "assert 1 == 2" in result
+    assert "1 failed, 10 passed" in result
+    assert result.count("\n") < len(lines)
+
+
+def test_smart_truncate_short_log_unchanged() -> None:
+    from stitch_agent.core.fixer import _smart_truncate_log
+
+    log = "line 1\nline 2\nline 3"
+    assert _smart_truncate_log(log) == log

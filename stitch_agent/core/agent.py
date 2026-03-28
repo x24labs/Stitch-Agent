@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import contextlib
+import logging
+import sys
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
@@ -19,6 +21,8 @@ from stitch_agent.models import (
     FixResult,
     StitchConfig,
 )
+
+logger = logging.getLogger("stitch_agent")
 
 if TYPE_CHECKING:
     from stitch_agent.adapters.base import CIPlatformAdapter
@@ -92,7 +96,20 @@ class StitchAgent:
         job_log = await self.adapter.fetch_job_logs(request)
         diff = await self.adapter.fetch_diff(request)
 
+        logger.debug(
+            "job_log length: %d chars, %d lines",
+            len(job_log), job_log.count("\n"),
+        )
+
         classification = await self.classifier.classify(job_log, diff)
+
+        logger.info(
+            "classification: type=%s confidence=%.0f%% affected_files=%s summary=%s",
+            classification.error_type.value,
+            classification.confidence * 100,
+            classification.affected_files[:10],
+            classification.summary[:200],
+        )
 
         if classification.error_type in ESCALATION_TYPES:
             result = self._escalate(
@@ -116,11 +133,19 @@ class StitchAgent:
             return result
 
         file_contents: dict[str, str] = {}
+        fetch_failed: list[str] = []
         for file_path in classification.affected_files:
             try:
                 file_contents[file_path] = await self.adapter.fetch_file_content(request, file_path)
             except Exception:
+                fetch_failed.append(file_path)
                 continue
+
+        logger.info(
+            "file_contents: fetched=%d failed=%s",
+            len(file_contents),
+            fetch_failed or "(none)",
+        )
 
         fix_patch = await self.fixer.generate_fix(
             classification=classification,
@@ -129,13 +154,21 @@ class StitchAgent:
             file_contents=file_contents,
         )
 
+        logger.info(
+            "fixer result: %d changes, commit_msg=%s, explanation=%s",
+            len(fix_patch.changes),
+            fix_patch.commit_message[:100],
+            fix_patch.explanation[:200],
+        )
+
         # Validate patch before pushing — reject destructive fixes
         validator = PatchValidator(config.validation)
-        validation = validator.validate(fix_patch, file_contents)
+        validation = validator.validate(fix_patch, file_contents, classification.error_type)
         if not validation.passed:
             detail = "; ".join(
                 f"{v.check}: {v.detail}" for v in validation.violations[:5]
             )
+            logger.warning("patch validation failed: %s", detail)
             result = self._escalate(
                 classification.error_type,
                 classification.confidence,
@@ -146,6 +179,11 @@ class StitchAgent:
             return result
 
         if not fix_patch.changes:
+            logger.warning(
+                "fixer returned no changes for job=%s type=%s",
+                request.job_name or request.job_id,
+                classification.error_type.value,
+            )
             result = FixResult(
                 status="error",
                 error_type=classification.error_type,
@@ -250,7 +288,7 @@ class StitchAgent:
 
         # Validate patch
         validator = PatchValidator(config.validation)
-        validation = validator.validate(fix_patch, file_contents)
+        validation = validator.validate(fix_patch, file_contents, classification.error_type)
         if not validation.passed:
             detail = "; ".join(
                 f"{v.check}: {v.detail}" for v in validation.violations[:5]

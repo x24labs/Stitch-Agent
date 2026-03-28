@@ -11,10 +11,19 @@ import os
 import re
 from typing import TYPE_CHECKING
 
-from stitch_agent.models import PatchViolation, ValidationConfig, ValidationResult
+from stitch_agent.models import ErrorType, HAIKU_TYPES, PatchViolation, ValidationConfig, ValidationResult
 
 if TYPE_CHECKING:
     from stitch_agent.core.fixer import FileChange, FixPatch
+
+# Error types where we allow new imports and relax signature checks
+_RELAXED_TYPES: frozenset[ErrorType] = frozenset({
+    ErrorType.TEST_CONTRACT,
+    ErrorType.LOGIC_ERROR,
+    ErrorType.BUILD,
+    ErrorType.COMPLEX_TYPE,
+    ErrorType.UNKNOWN,
+})
 
 _LANG_MAP: dict[str, str] = {
     ".py": "python",
@@ -83,10 +92,12 @@ class PatchValidator:
         self,
         patch: FixPatch,
         original_contents: dict[str, str],
+        error_type: ErrorType | None = None,
     ) -> ValidationResult:
         if not self.config.enabled:
             return ValidationResult(passed=True)
 
+        relaxed = error_type is not None and error_type in _RELAXED_TYPES
         violations: list[PatchViolation] = []
 
         # Global: file count check
@@ -116,7 +127,10 @@ class PatchValidator:
 
             original = original_contents.get(change.path)
             if original is None and change.action == "update":
-                # Can't validate without original — fail closed
+                if relaxed:
+                    # For test/build errors, allow changes to files we don't have
+                    # originals for (e.g., config files, new source files)
+                    continue
                 violations.append(
                     PatchViolation(
                         file_path=change.path,
@@ -128,38 +142,39 @@ class PatchValidator:
 
             if original is not None:
                 violations.extend(
-                    self._check_file(change, original)
+                    self._check_file(change, original, relaxed=relaxed)
                 )
 
         passed = not any(v.severity == "error" for v in violations)
         return ValidationResult(passed=passed, violations=violations)
 
     def _check_file(
-        self, change: FileChange, original: str
+        self, change: FileChange, original: str, *, relaxed: bool = False,
     ) -> list[PatchViolation]:
         violations: list[PatchViolation] = []
         lang = _detect_lang(change.path)
 
-        # 1. Diff ratio — primary safety net
+        # 1. Diff ratio — primary safety net (always enforced, but relaxed threshold)
         orig_lines = _normalize(original)
         new_lines = _normalize(change.new_content)
         ratio = difflib.SequenceMatcher(None, orig_lines, new_lines).ratio()
         diff_ratio = 1.0 - ratio
 
-        if diff_ratio > self.config.max_diff_ratio:
+        max_ratio = 0.60 if relaxed else self.config.max_diff_ratio
+        if diff_ratio > max_ratio:
             violations.append(
                 PatchViolation(
                     file_path=change.path,
                     check="diff_ratio",
                     detail=(
                         f"File changed by {diff_ratio:.0%} "
-                        f"(max {self.config.max_diff_ratio:.0%}). "
+                        f"(max {max_ratio:.0%}). "
                         f"This looks like a full rewrite, not a minimal fix."
                     ),
                 )
             )
 
-        # 2. Line count delta
+        # 2. Line count delta (relaxed: allow more changes)
         diff_lines = list(
             difflib.unified_diff(orig_lines, new_lines, lineterm="")
         )
@@ -167,14 +182,15 @@ class PatchValidator:
             1 for line in diff_lines if line.startswith(("+", "-"))
             and not line.startswith(("+++", "---"))
         )
-        if changed_lines > self.config.max_lines_changed:
+        max_lines = self.config.max_lines_changed * 2 if relaxed else self.config.max_lines_changed
+        if changed_lines > max_lines:
             violations.append(
                 PatchViolation(
                     file_path=change.path,
                     check="max_lines_changed",
                     detail=(
                         f"{changed_lines} lines changed, "
-                        f"max allowed is {self.config.max_lines_changed}"
+                        f"max allowed is {max_lines}"
                     ),
                 )
             )
@@ -182,20 +198,20 @@ class PatchValidator:
         if lang is None:
             return violations
 
-        # 3. Export removal detection
+        # 3. Export removal detection (always enforced)
         if self.config.block_export_removal:
             violations.extend(
                 self._check_exports(change.path, original, change.new_content, lang)
             )
 
-        # 4. Signature preservation
-        if self.config.block_signature_changes:
+        # 4. Signature preservation (skip in relaxed mode)
+        if self.config.block_signature_changes and not relaxed:
             violations.extend(
                 self._check_signatures(change.path, original, change.new_content, lang)
             )
 
-        # 5. New import detection
-        if self.config.block_new_imports:
+        # 5. New import detection (skip in relaxed mode)
+        if self.config.block_new_imports and not relaxed:
             violations.extend(
                 self._check_imports(change.path, original, change.new_content, lang)
             )

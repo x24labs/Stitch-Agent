@@ -66,6 +66,7 @@ _RULES: dict[ErrorType, list[tuple[re.Pattern[str], float]]] = {
     ErrorType.LOGIC_ERROR: [
         (re.compile(r"^Traceback \(most recent call last\)", re.M), 1.0),
         (re.compile(r"\b(AttributeError|NameError|TypeError|IndexError|KeyError): "), 1.0),
+        (re.compile(r"\b(ModuleNotFoundError|ImportError): "), 1.0),
         (re.compile(r"\b(RuntimeError|ValueError|OverflowError|ZeroDivisionError): "), 0.9),
         (re.compile(r"SIGSEGV|Segmentation fault|core dumped", re.I), 0.9),
         (re.compile(r"Process finished with exit code [^0]"), 0.6),
@@ -98,6 +99,38 @@ _STANDALONE_FILE_RE = re.compile(
     re.M,
 )
 
+# Pytest traceback: "  File "/app/src/foo/bar.py", line 42, in func"
+_TRACEBACK_FILE_RE = re.compile(
+    r'File "(?:/[^"]*?/)?'
+    r"((?:src|lib|app|scrapers|tests|pkg|internal|cmd)/[^\"]+\.py)"
+    r'", line \d+',
+    re.M,
+)
+
+# ModuleNotFoundError: No module named 'scrapers.utils'
+_MODULE_NOT_FOUND_RE = re.compile(
+    r"(?:ModuleNotFoundError|ImportError):.*['\"](\w+(?:\.\w+)*)['\"]",
+    re.M,
+)
+
+# pytest collection error: "ERROR collecting tests/test_foo.py"
+_PYTEST_COLLECT_RE = re.compile(
+    r"ERROR\s+collecting\s+([\w/.-]+\.py)",
+    re.M,
+)
+
+
+def _module_to_paths(module: str) -> list[str]:
+    """Convert a dotted module name to likely file paths."""
+    parts = module.split(".")
+    base = "/".join(parts)
+    return [
+        f"{base}.py",
+        f"{base}/__init__.py",
+        f"src/{base}.py",
+        f"src/{base}/__init__.py",
+    ]
+
 
 class Classifier:
     def __init__(self, config: StitchConfig | None = None) -> None:
@@ -124,12 +157,29 @@ class Classifier:
                 if pattern.flags & re.S and pattern.search(job_log):
                     scores[error_type] += weight * 0.3
 
+        # Extract source files from pytest tracebacks (not just test files)
+        for m in _TRACEBACK_FILE_RE.finditer(job_log):
+            affected_files.add(m.group(1))
+
+        # Extract files from collection errors
+        for m in _PYTEST_COLLECT_RE.finditer(job_log):
+            affected_files.add(m.group(1))
+
+        # Convert module-not-found errors to file paths
+        for m in _MODULE_NOT_FOUND_RE.finditer(job_log):
+            for path in _module_to_paths(m.group(1)):
+                affected_files.add(path)
+
+        # Also check pyproject.toml/setup.cfg when we see install/import errors
+        if any(kw in job_log for kw in ("ModuleNotFoundError", "ImportError", "pip install", "No module named")):
+            affected_files.update(["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"])
+
         if not scores:
             return ClassificationResult(
                 error_type=ErrorType.UNKNOWN,
                 confidence=0.5,
                 summary="No recognizable error patterns found in job log",
-                affected_files=[],
+                affected_files=sorted(affected_files)[:20],
             )
 
         best_type = max(scores, key=lambda t: scores[t])

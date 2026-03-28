@@ -78,6 +78,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=5,
         help="Max failed jobs to process (default 5)",
     )
+    ci_parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        default=False,
+        help="Enable verbose debug output (also: STITCH_VERBOSE=1)",
+    )
 
     doctor_parser = subparsers.add_parser("doctor", help="Run onboarding diagnostics")
     doctor_parser.add_argument("--repo", default=".", help="Repository root path")
@@ -186,6 +192,7 @@ async def run_ci_command(args: argparse.Namespace) -> int:
         output_format=args.output,
         platform_override=args.platform,
         max_jobs=args.max_jobs,
+        verbose=getattr(args, "verbose", False),
     )
 
 
