@@ -349,15 +349,22 @@ def _error_signature(log: str) -> str:
     """Extract a short signature from a job log for deduplication.
 
     Looks for the core error line (e.g. "unrecognized arguments: --cov-data-file")
-    stripping variable parts like file names and coverage module names.
+    stripping variable parts like file names, timestamps, and coverage module names.
     """
+    # Generic lines that don't identify the actual error
+    _SKIP = ("section_", "Cleaning", "Uploading", "WARNING", "Job failed", "exit code")
+
     for line in reversed(log.splitlines()):
         line = line.strip()
-        # Skip empty, timestamp-only, and generic lines
-        if not line or line.startswith(("section_", "Cleaning", "Uploading", "WARNING")):
+        if not line:
+            continue
+        # Strip GitLab timestamp prefix (e.g. "2026-03-28T06:34:08.247629Z 01E ")
+        line = re.sub(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+\w+\s*", "", line)
+        line = line.strip()
+        if not line or any(line.startswith(s) or s in line for s in _SKIP):
             continue
         if "error" in line.lower() or "failed" in line.lower():
-            # Normalize variable parts: coverage file names, paths, line numbers
+            # Normalize variable parts
             sig = re.sub(r"\.coverage\.\w+", ".coverage.*", line)
             sig = re.sub(r":\d+:\d+", ":*:*", sig)
             sig = re.sub(r"tests/\S+\.py::\S+", "tests/*", sig)
