@@ -11,7 +11,7 @@ import os
 import re
 from typing import TYPE_CHECKING
 
-from stitch_agent.models import ErrorType, HAIKU_TYPES, PatchViolation, ValidationConfig, ValidationResult
+from stitch_agent.models import ErrorType, PatchViolation, ValidationConfig, ValidationResult
 
 if TYPE_CHECKING:
     from stitch_agent.core.fixer import FileChange, FixPatch
