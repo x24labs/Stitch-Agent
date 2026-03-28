@@ -93,14 +93,38 @@
   "hotPaths": [
     {
       "path": "stitch_agent/core/fixer.py",
-      "accessCount": 7,
-      "lastAccessed": 1774667315932,
+      "accessCount": 17,
+      "lastAccessed": 1774678577433,
       "type": "file"
     },
     {
       "path": "stitch_agent/core/agent.py",
-      "accessCount": 2,
-      "lastAccessed": 1774668100179,
+      "accessCount": 15,
+      "lastAccessed": 1774677411781,
+      "type": "file"
+    },
+    {
+      "path": "runners/ci_runner.py",
+      "accessCount": 6,
+      "lastAccessed": 1774676215433,
+      "type": "file"
+    },
+    {
+      "path": "stitch_agent/core/classifier.py",
+      "accessCount": 6,
+      "lastAccessed": 1774677498012,
+      "type": "file"
+    },
+    {
+      "path": "stitch_agent/adapters/github.py",
+      "accessCount": 5,
+      "lastAccessed": 1774677427968,
+      "type": "directory"
+    },
+    {
+      "path": "pyproject.toml",
+      "accessCount": 4,
+      "lastAccessed": 1774677511411,
       "type": "file"
     },
     {
@@ -110,9 +134,21 @@
       "type": "file"
     },
     {
+      "path": "README.md",
+      "accessCount": 2,
+      "lastAccessed": 1774674073432,
+      "type": "file"
+    },
+    {
+      "path": "stitch_agent/adapters/base.py",
+      "accessCount": 2,
+      "lastAccessed": 1774677194943,
+      "type": "file"
+    },
+    {
       "path": "stitch_agent/adapters/gitlab.py",
-      "accessCount": 1,
-      "lastAccessed": 1774667074581,
+      "accessCount": 2,
+      "lastAccessed": 1774677204416,
       "type": "file"
     },
     {
