@@ -25,6 +25,7 @@ _RESPONSE_FORMAT = (
     '  "explanation": "Two sentences: what was wrong and how it was fixed."\n'
     "}\n\n"
     "Only include files that need to change. The files dict must contain COMPLETE new content.\n"
+    "IMPORTANT: Do NOT include line numbers in the file content — output raw source only.\n"
     "If the fix is truly impossible (would require wholesale architecture changes), "
     "return an empty files dict and explain why."
 )
@@ -99,7 +100,7 @@ def _get_system_prompt(error_type: ErrorType) -> str:
     return f"{_BASE_PREAMBLE}{constraints}{_RESPONSE_FORMAT}"
 
 _MAX_LOG_LINES = 200
-_MAX_FILE_CHARS = 8000
+_MAX_FILE_CHARS = 48_000
 
 _ERROR_SECTION_RE = re.compile(
     r"("
@@ -197,7 +198,7 @@ class Fixer:
         client = self._get_client()
         message = await client.messages.create(
             model=model,
-            max_tokens=4096,
+            max_tokens=16_384,
             system=system_prompt,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -218,10 +219,16 @@ def _build_prompt(
         parts = []
         for path, content in file_contents.items():
             truncated = content[:_MAX_FILE_CHARS]
-            if len(content) > _MAX_FILE_CHARS:
-                truncated += "\n... (truncated)"
-            parts.append(f"### {path}\n```\n{truncated}\n```")
-        files_section = "\n\n## Current file contents\n" + "\n\n".join(parts)
+            was_truncated = len(content) > _MAX_FILE_CHARS
+            # Add line numbers so the LLM can locate error lines from the log
+            numbered = []
+            for i, line in enumerate(truncated.splitlines(), 1):
+                numbered.append(f"{i:>4}| {line}")
+            display = "\n".join(numbered)
+            if was_truncated:
+                display += "\n... (truncated)"
+            parts.append(f"### {path}\n```\n{display}\n```")
+        files_section = "\n\n## Current file contents (line numbers for reference only — do NOT include them in output)\n" + "\n\n".join(parts)
 
     affected = ", ".join(classification.affected_files) or "unknown"
     return (
