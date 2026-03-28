@@ -77,3 +77,9 @@ class CIPlatformAdapter(ABC):
     async def list_directory(
         self, request: FixRequest, path: str = "",
     ) -> list[dict[str, str]]: ...
+
+    async def validate_ci_config(
+        self, project_id: str, content: str,
+    ) -> tuple[bool, str]:
+        """Validate CI config content. Returns (valid, error_message)."""
+        return True, ""

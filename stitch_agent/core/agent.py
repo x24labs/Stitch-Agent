@@ -179,6 +179,40 @@ class StitchAgent:
             await self._notify(request, result, config)
             return result
 
+        # Validate CI config files before pushing (self-correction loop)
+        ci_config_files = {".gitlab-ci.yml", ".github/workflows"}
+        for _retry in range(2):
+            ci_changes = [
+                c for c in fix_patch.changes
+                if any(c.path.endswith(cf) or c.path.startswith(".github/workflows") for cf in ci_config_files)
+                if c.path == ".gitlab-ci.yml"
+            ]
+            if not ci_changes:
+                break
+
+            for change in ci_changes:
+                valid, lint_error = await self.adapter.validate_ci_config(
+                    request.project_id, change.new_content,
+                )
+                if not valid:
+                    logger.warning("CI config lint failed: %s — asking LLM to fix", lint_error)
+                    fix_patch = await self.fixer.generate_fix(
+                        classification=classification,
+                        job_log=f"PREVIOUS FIX PRODUCED INVALID CI CONFIG.\n"
+                                f"GitLab CI lint error: {lint_error}\n\n"
+                                f"Original job log:\n{job_log}",
+                        diff=diff,
+                        file_contents={change.path: change.new_content},
+                        adapter=self.adapter,
+                        request=request,
+                    )
+                    logger.info(
+                        "self-correction result: %d changes", len(fix_patch.changes),
+                    )
+                    break  # re-validate
+            else:
+                break  # all CI configs valid
+
         if not fix_patch.changes:
             logger.warning(
                 "fixer returned no changes for job=%s type=%s",

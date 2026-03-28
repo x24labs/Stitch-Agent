@@ -248,6 +248,22 @@ class GitLabAdapter(CIPlatformAdapter):
             return ""
         return commits[0].get("message", "")
 
+    async def validate_ci_config(
+        self, project_id: str, content: str,
+    ) -> tuple[bool, str]:
+        """Validate .gitlab-ci.yml content via GitLab CI lint API."""
+        resp = await self._client.post(
+            f"{self._pid(project_id)}/ci/lint",
+            json={"content": content},
+        )
+        if resp.status_code != 200:
+            return True, ""  # Can't validate, let it through
+        data = resp.json()
+        if data.get("valid", True):
+            return True, ""
+        errors = data.get("errors", [])
+        return False, "; ".join(errors[:5])
+
     async def search_codebase(
         self, request: FixRequest, pattern: str, max_results: int = 20,
     ) -> list[dict[str, str]]:
