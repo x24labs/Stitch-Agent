@@ -234,7 +234,18 @@ class Fixer:
             prompt += (
                 "\n\nThis is a FORMAT/LINT error. The affected file contents are "
                 "already provided above. Do NOT search or read files — just produce "
-                "the fix JSON immediately by reformatting/fixing the code."
+                "the fix JSON immediately.\n\n"
+                "CRITICAL formatting rules (apply ALL of these to EVERY line):\n"
+                "- Maximum line length: 88 characters (black default)\n"
+                "- Break ALL lines exceeding 88 chars, not just some\n"
+                "- For function calls: put each argument on its own line if the call exceeds 88 chars\n"
+                "- For function definitions: put each parameter on its own line if the def exceeds 88 chars\n"
+                "- Closing paren/bracket goes on its own line, aligned with the opening statement\n"
+                "- Use trailing commas after the last argument in multi-line calls\n"
+                "- Collapse single-line docstrings: '''\\nText.\\n''' → '''Text.'''\n"
+                "- Scan the ENTIRE file for violations, not just the obvious ones\n"
+                "- You MUST return the COMPLETE file content with ALL formatting fixed\n"
+                "- A partial fix that misses even one line will cause the CI to fail again\n"
             )
         else:
             prompt += "\n\nInvestigate the error and produce the minimal fix."
