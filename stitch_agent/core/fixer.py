@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import anthropic
 from anthropic.types import MessageParam, TextBlock, ToolParam, ToolUseBlock
 
-from stitch_agent.models import ClassificationResult, StitchConfig, select_model
+from stitch_agent.models import ClassificationResult, ErrorType, StitchConfig, select_model
 
 if TYPE_CHECKING:
     from stitch_agent.adapters.base import CIPlatformAdapter
@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("stitch_agent")
 
 _MAX_TOOL_ROUNDS = 15
+_FAST_FIX_TYPES: frozenset[ErrorType] = frozenset({ErrorType.FORMAT, ErrorType.LINT})
 _MAX_LOG_LINES = 200
 
 _SYSTEM_PROMPT = (
@@ -214,8 +215,8 @@ class Fixer:
             f"```diff\n{diff or '(no diff available)'}\n```"
         )
 
-        # If we have pre-fetched files (fallback mode without adapter), include them
-        if file_contents and not adapter:
+        # Include pre-fetched file contents when available
+        if file_contents:
             parts = []
             for path, content in file_contents.items():
                 numbered = []
@@ -227,11 +228,23 @@ class Fixer:
                 " — do NOT include in output)\n" + "\n\n".join(parts)
             )
 
-        prompt += "\n\nInvestigate the error and produce the minimal fix."
+        is_fast_fix = classification.error_type in _FAST_FIX_TYPES
+
+        if is_fast_fix:
+            prompt += (
+                "\n\nThis is a FORMAT/LINT error. The affected file contents are "
+                "already provided above. Do NOT search or read files — just produce "
+                "the fix JSON immediately by reformatting/fixing the code."
+            )
+        else:
+            prompt += "\n\nInvestigate the error and produce the minimal fix."
 
         # If adapter available, use agentic tool-use mode
         if adapter and request:
-            return await self._agentic_fix(client, model, prompt, adapter, request)
+            return await self._agentic_fix(
+                client, model, prompt, adapter, request,
+                skip_tools=is_fast_fix,
+            )
 
         # Fallback: single-shot (backward compatible)
         return await self._single_shot_fix(client, model, prompt)
@@ -256,9 +269,32 @@ class Fixer:
         prompt: str,
         adapter: CIPlatformAdapter,
         request: FixRequest,
+        *,
+        skip_tools: bool = False,
     ) -> FixPatch:
         """Agentic fix with tool use — the LLM investigates before fixing."""
         messages: list[MessageParam] = [{"role": "user", "content": prompt}]
+
+        # Fast path: FORMAT/LINT errors already have file contents in the prompt,
+        # so skip tools entirely and let the LLM produce the fix in one shot.
+        if skip_tools:
+            response = await client.messages.create(
+                model=model,
+                max_tokens=16_384,
+                system=_SYSTEM_PROMPT,
+                messages=messages,
+            )
+            raw = next(
+                (b.text for b in response.content if isinstance(b, TextBlock)), ""
+            )
+            if raw:
+                logger.info("fast-path fix for format/lint error (no tools needed)")
+                return _parse_response(raw)
+            return FixPatch(
+                changes=[],
+                commit_message="fix: automated fix by stitch-agent",
+                explanation="Fast-path fix produced no output",
+            )
 
         for round_num in range(_MAX_TOOL_ROUNDS):
             response = await client.messages.create(
