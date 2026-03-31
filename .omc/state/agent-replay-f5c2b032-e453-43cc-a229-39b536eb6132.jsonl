@@ -1,4 +1,0 @@
-{"t":0,"agent":"a548a1b","agent_type":"Explore","event":"agent_start","parent_mode":"none"}
-{"t":0,"agent":"a548a1b","agent_type":"Explore","event":"agent_stop","success":true,"duration_ms":80547}
-{"t":0,"agent":"a1c3179","agent_type":"unknown","event":"agent_stop","success":true}
-{"t":0,"agent":"system","event":"skill_invoked","skill_name":"gitlab"}

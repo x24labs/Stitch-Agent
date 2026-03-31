@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1774667041927,
+  "lastScanned": 1774898808201,
   "projectRoot": "/home/roblesh/projects/x24labs/stitch/library",
   "techStack": {
     "languages": [
@@ -50,7 +50,7 @@
       "path": "dist",
       "purpose": "Distribution/build output",
       "fileCount": 2,
-      "lastAccessed": 1774667041922,
+      "lastAccessed": 1774898808194,
       "keyFiles": [
         "stitch_agent-0.3.0-py3-none-any.whl",
         "stitch_agent-0.3.0.tar.gz"
@@ -60,7 +60,7 @@
       "path": "runners",
       "purpose": null,
       "fileCount": 3,
-      "lastAccessed": 1774667041923,
+      "lastAccessed": 1774898808195,
       "keyFiles": [
         "__init__.py",
         "ci_runner.py",
@@ -71,7 +71,7 @@
       "path": "stitch_agent",
       "purpose": null,
       "fileCount": 5,
-      "lastAccessed": 1774667041924,
+      "lastAccessed": 1774898808197,
       "keyFiles": [
         "__init__.py",
         "config.py",
@@ -84,7 +84,7 @@
       "path": "tests",
       "purpose": "Test files",
       "fileCount": 1,
-      "lastAccessed": 1774667041926,
+      "lastAccessed": 1774898808198,
       "keyFiles": [
         "__init__.py"
       ]
@@ -93,74 +93,170 @@
   "hotPaths": [
     {
       "path": "stitch_agent/core/fixer.py",
-      "accessCount": 17,
-      "lastAccessed": 1774678577433,
+      "accessCount": 45,
+      "lastAccessed": 1774973327913,
       "type": "file"
     },
     {
       "path": "stitch_agent/core/agent.py",
-      "accessCount": 15,
-      "lastAccessed": 1774677411781,
+      "accessCount": 27,
+      "lastAccessed": 1774973380139,
       "type": "file"
     },
     {
       "path": "runners/ci_runner.py",
-      "accessCount": 6,
-      "lastAccessed": 1774676215433,
+      "accessCount": 25,
+      "lastAccessed": 1774975966526,
       "type": "file"
-    },
-    {
-      "path": "stitch_agent/core/classifier.py",
-      "accessCount": 6,
-      "lastAccessed": 1774677498012,
-      "type": "file"
-    },
-    {
-      "path": "stitch_agent/adapters/github.py",
-      "accessCount": 5,
-      "lastAccessed": 1774677427968,
-      "type": "directory"
     },
     {
       "path": "pyproject.toml",
-      "accessCount": 4,
-      "lastAccessed": 1774677511411,
-      "type": "file"
-    },
-    {
-      "path": "stitch_agent/core/patch_validator.py",
-      "accessCount": 2,
-      "lastAccessed": 1774668100519,
-      "type": "file"
-    },
-    {
-      "path": "README.md",
-      "accessCount": 2,
-      "lastAccessed": 1774674073432,
-      "type": "file"
-    },
-    {
-      "path": "stitch_agent/adapters/base.py",
-      "accessCount": 2,
-      "lastAccessed": 1774677194943,
-      "type": "file"
-    },
-    {
-      "path": "stitch_agent/adapters/gitlab.py",
-      "accessCount": 2,
-      "lastAccessed": 1774677204416,
+      "accessCount": 22,
+      "lastAccessed": 1774976227457,
       "type": "file"
     },
     {
       "path": "stitch_agent/models.py",
-      "accessCount": 1,
-      "lastAccessed": 1774667075021,
+      "accessCount": 16,
+      "lastAccessed": 1774975966272,
       "type": "file"
     },
     {
+      "path": "stitch_agent/core/classifier.py",
+      "accessCount": 10,
+      "lastAccessed": 1774973336891,
+      "type": "file"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 7,
+      "lastAccessed": 1774974569716,
+      "type": "file"
+    },
+    {
+      "path": "tests/unit/test_fixer.py",
+      "accessCount": 7,
+      "lastAccessed": 1774974903462,
+      "type": "file"
+    },
+    {
+      "path": "stitch_agent/adapters/gitlab.py",
+      "accessCount": 6,
+      "lastAccessed": 1774975959091,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 4,
+      "lastAccessed": 1774966792070,
+      "type": "directory"
+    },
+    {
       "path": "stitch_agent/settings.py",
+      "accessCount": 3,
+      "lastAccessed": 1774920009614,
+      "type": "file"
+    },
+    {
+      "path": "runners/cli.py",
+      "accessCount": 3,
+      "lastAccessed": 1774920199894,
+      "type": "file"
+    },
+    {
+      "path": "stitch_agent",
+      "accessCount": 3,
+      "lastAccessed": 1774972414518,
+      "type": "directory"
+    },
+    {
+      "path": "stitch_agent/adapters/base.py",
+      "accessCount": 3,
+      "lastAccessed": 1774975846476,
+      "type": "file"
+    },
+    {
+      "path": ".stitch.yml",
+      "accessCount": 2,
+      "lastAccessed": 1774925857185,
+      "type": "file"
+    },
+    {
+      "path": "stitch_agent/adapters/github.py",
+      "accessCount": 2,
+      "lastAccessed": 1774975959380,
+      "type": "file"
+    },
+    {
+      "path": "tests/unit/test_gitlab_adapter.py",
+      "accessCount": 2,
+      "lastAccessed": 1774975970408,
+      "type": "file"
+    },
+    {
+      "path": "tests/unit/test_github_adapter.py",
+      "accessCount": 2,
+      "lastAccessed": 1774975970581,
+      "type": "file"
+    },
+    {
+      "path": "tests/unit/test_ci_runner.py",
+      "accessCount": 2,
+      "lastAccessed": 1774975973959,
+      "type": "file"
+    },
+    {
+      "path": "tests/integration/test_github_e2e.py",
+      "accessCount": 2,
+      "lastAccessed": 1774976150535,
+      "type": "file"
+    },
+    {
+      "path": "stitch_agent/onboarding/doctor.py",
       "accessCount": 1,
-      "lastAccessed": 1774667075318,
+      "lastAccessed": 1774918862041,
+      "type": "file"
+    },
+    {
+      "path": "stitch_agent/config.py",
+      "accessCount": 1,
+      "lastAccessed": 1774919971553,
+      "type": "file"
+    },
+    {
+      "path": "runners",
+      "accessCount": 1,
+      "lastAccessed": 1774920189934,
+      "type": "directory"
+    },
+    {
+      "path": "tests",
+      "accessCount": 1,
+      "lastAccessed": 1774920249848,
+      "type": "directory"
+    },
+    {
+      "path": "stitch_agent/core",
+      "accessCount": 1,
+      "lastAccessed": 1774966652243,
+      "type": "directory"
+    },
+    {
+      "path": "tests/integration/conftest.py",
+      "accessCount": 1,
+      "lastAccessed": 1774975995909,
+      "type": "file"
+    },
+    {
+      "path": "tests/integration/test_gitlab_e2e.py",
+      "accessCount": 1,
+      "lastAccessed": 1774976041304,
+      "type": "file"
+    },
+    {
+      "path": "tests/integration/test_ci_runner_e2e.py",
+      "accessCount": 1,
+      "lastAccessed": 1774976133746,
       "type": "file"
     }
   ],
