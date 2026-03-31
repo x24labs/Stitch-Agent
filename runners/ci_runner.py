@@ -60,7 +60,9 @@ def _print_banner(ctx: CIContext) -> None:
         f"  │  Mode:      {mode:<28s}│\n"
         f"  │  Branch:    {branch[:28]:<28s}│\n"
         f"  │  Pipeline:  {pipeline[:28]:<28s}│\n"
-        f"  └─────────────────────────────────────────┘\n"
+        f"  └─────────────────────────────────────────┘\n",
+        file=sys.stderr,
+        flush=True,
     )
 
 _STITCH_BRANCH_RE = re.compile(r"^stitch/fix-")
