@@ -190,14 +190,17 @@ class FixPatch:
 
 
 def _extract_usage(response: object) -> UsageStats:
-    """Extract token usage from an OpenAI-compatible API response."""
+    """Extract token usage and generation ID from an OpenAI-compatible API response."""
     usage = getattr(response, "usage", None)
+    gen_id = getattr(response, "id", None)
+    gen_ids = [gen_id] if gen_id and isinstance(gen_id, str) else []
     if usage is None:
-        return UsageStats()
+        return UsageStats(generation_ids=gen_ids)
     return UsageStats(
         prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
         completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
         total_tokens=getattr(usage, "total_tokens", 0) or 0,
+        generation_ids=gen_ids,
     )
 
 

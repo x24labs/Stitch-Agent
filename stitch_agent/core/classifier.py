@@ -109,12 +109,17 @@ class Classifier:
         raw = response.choices[0].message.content or ""
         result = _parse_classification(raw)
         usage = getattr(response, "usage", None)
+        gen_id = getattr(response, "id", None)
+        gen_ids = [gen_id] if gen_id and isinstance(gen_id, str) else []
         if usage:
             result.usage = UsageStats(
                 prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
                 completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
                 total_tokens=getattr(usage, "total_tokens", 0) or 0,
+                generation_ids=gen_ids,
             )
+        elif gen_ids:
+            result.usage = UsageStats(generation_ids=gen_ids)
         return result
 
 

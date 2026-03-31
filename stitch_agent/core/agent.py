@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
+
+import httpx
 
 from stitch_agent.config import parse_config
 from stitch_agent.core.classifier import Classifier
@@ -27,6 +30,34 @@ if TYPE_CHECKING:
     from stitch_agent.adapters.base import CIPlatformAdapter
 
 EscalationCallback = Callable[[FixRequest, FixResult], Awaitable[None]]
+
+_OPENROUTER_GENERATION_URL = "https://openrouter.ai/api/v1/generation"
+
+
+async def _fetch_generation_costs(
+    api_key: str, usage: UsageStats, *, timeout: float = 5.0,
+) -> None:
+    """Fetch actual costs from OpenRouter for all tracked generation IDs."""
+    if not usage.generation_ids:
+        return
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for gen_id in usage.generation_ids:
+            for _attempt in range(2):
+                try:
+                    resp = await client.get(
+                        _OPENROUTER_GENERATION_URL,
+                        params={"id": gen_id},
+                        headers={"Authorization": f"Bearer {api_key}"},
+                    )
+                    if resp.status_code == 200:
+                        cost = resp.json().get("data", {}).get("total_cost")
+                        if cost is not None:
+                            usage.cost_usd += float(cost)
+                            break
+                    # Stats may not be ready yet — brief delay before retry
+                    await asyncio.sleep(0.3)
+                except Exception:
+                    break
 
 
 class StitchAgent:
@@ -170,11 +201,16 @@ class StitchAgent:
             fix_patch.commit_message[:100],
             fix_patch.explanation[:200],
         )
+        # Fetch actual costs from OpenRouter (non-blocking, best-effort)
+        with contextlib.suppress(Exception):
+            await _fetch_generation_costs(self._api_key, total_usage)
+
         logger.info(
-            "usage: prompt=%d completion=%d total=%d tokens",
+            "usage: prompt=%d completion=%d total=%d tokens, cost=$%.6f",
             total_usage.prompt_tokens,
             total_usage.completion_tokens,
             total_usage.total_tokens,
+            total_usage.cost_usd,
         )
 
         # Validate patch before pushing — reject destructive fixes

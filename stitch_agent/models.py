@@ -71,11 +71,15 @@ class UsageStats(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    cost_usd: float = 0.0
+    generation_ids: list[str] = Field(default_factory=list)
 
     def __iadd__(self, other: UsageStats) -> UsageStats:
         self.prompt_tokens += other.prompt_tokens
         self.completion_tokens += other.completion_tokens
         self.total_tokens += other.total_tokens
+        self.cost_usd += other.cost_usd
+        self.generation_ids.extend(other.generation_ids)
         return self
 
 

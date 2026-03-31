@@ -549,4 +549,6 @@ def _print_text_results(results: list[dict[str, object]]) -> None:
             print(f"   MR URL: {r['mr_url']}")
         usage = r.get("usage")
         if usage and isinstance(usage, dict) and usage.get("total_tokens"):
-            print(f"   Tokens: {usage['prompt_tokens']:,} in / {usage['completion_tokens']:,} out ({usage['total_tokens']:,} total)")
+            cost = usage.get("cost_usd", 0)
+            cost_str = f" — ${cost:.4f}" if cost else ""
+            print(f"   Tokens: {usage['prompt_tokens']:,} in / {usage['completion_tokens']:,} out ({usage['total_tokens']:,} total){cost_str}")
