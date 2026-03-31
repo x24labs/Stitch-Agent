@@ -16,6 +16,7 @@ from stitch_agent.models import (
     ClassificationResult,
     ErrorType,
     StitchConfig,
+    UsageStats,
 )
 
 logger = logging.getLogger("stitch_agent")
@@ -106,7 +107,15 @@ class Classifier:
         )
 
         raw = response.choices[0].message.content or ""
-        return _parse_classification(raw)
+        result = _parse_classification(raw)
+        usage = getattr(response, "usage", None)
+        if usage:
+            result.usage = UsageStats(
+                prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                total_tokens=getattr(usage, "total_tokens", 0) or 0,
+            )
+        return result
 
 
 def _parse_classification(raw: str) -> ClassificationResult:

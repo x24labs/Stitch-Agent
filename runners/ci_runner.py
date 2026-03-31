@@ -547,3 +547,6 @@ def _print_text_results(results: list[dict[str, object]]) -> None:
             print(f"   Branch: {r['fix_branch']}")
         if r.get("mr_url"):
             print(f"   MR URL: {r['mr_url']}")
+        usage = r.get("usage")
+        if usage and isinstance(usage, dict) and usage.get("total_tokens"):
+            print(f"   Tokens: {usage['prompt_tokens']:,} in / {usage['completion_tokens']:,} out ({usage['total_tokens']:,} total)")

@@ -18,6 +18,7 @@ from stitch_agent.models import (
     FixRequest,
     FixResult,
     StitchConfig,
+    UsageStats,
 )
 
 logger = logging.getLogger("stitch_agent")
@@ -105,6 +106,8 @@ class StitchAgent:
         )
 
         classification = await self.classifier.classify(job_log, diff)
+        total_usage = UsageStats()
+        total_usage += classification.usage
 
         logger.info(
             "classification: type=%s confidence=%.0f%% affected_files=%s summary=%s",
@@ -159,11 +162,19 @@ class StitchAgent:
             request=request,
         )
 
+        total_usage += fix_patch.usage
+
         logger.info(
             "fixer result: %d changes, commit_msg=%s, explanation=%s",
             len(fix_patch.changes),
             fix_patch.commit_message[:100],
             fix_patch.explanation[:200],
+        )
+        logger.info(
+            "usage: prompt=%d completion=%d total=%d tokens",
+            total_usage.prompt_tokens,
+            total_usage.completion_tokens,
+            total_usage.total_tokens,
         )
 
         # Validate patch before pushing — reject destructive fixes
@@ -229,6 +240,7 @@ class StitchAgent:
                 confidence=classification.confidence,
                 reason="Fixer produced no file changes",
                 escalation_reason_code="no_changes",
+                usage=total_usage,
             )
             await self._notify(request, result, config)
             return result
@@ -274,6 +286,7 @@ class StitchAgent:
             mr_url=mr_url,
             reason=fix_patch.explanation,
             fix_branch=fix_branch,
+            usage=total_usage,
         )
         self._history.record(request, result)
         return result

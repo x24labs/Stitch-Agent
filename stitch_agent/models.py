@@ -67,11 +67,24 @@ class FixRequest(BaseModel):
     job_name: str | None = None
 
 
+class UsageStats(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+    def __iadd__(self, other: UsageStats) -> UsageStats:
+        self.prompt_tokens += other.prompt_tokens
+        self.completion_tokens += other.completion_tokens
+        self.total_tokens += other.total_tokens
+        return self
+
+
 class ClassificationResult(BaseModel):
     error_type: ErrorType
     confidence: float = Field(ge=0.0, le=1.0)
     summary: str
     affected_files: list[str] = Field(default_factory=list)
+    usage: UsageStats = Field(default_factory=UsageStats)
 
 
 class FixResult(BaseModel):
@@ -82,6 +95,7 @@ class FixResult(BaseModel):
     reason: str
     fix_branch: str | None = None
     escalation_reason_code: str | None = None
+    usage: UsageStats = Field(default_factory=UsageStats)
 
 
 class NotifyChannelConfig(BaseModel):

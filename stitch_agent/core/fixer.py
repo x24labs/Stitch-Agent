@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Literal
 
 from openai import AsyncOpenAI
 
-from stitch_agent.models import ClassificationResult, ErrorType, StitchConfig, select_model
+from stitch_agent.models import ClassificationResult, ErrorType, StitchConfig, UsageStats, select_model
 
 if TYPE_CHECKING:
     from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
@@ -186,6 +186,19 @@ class FixPatch:
     changes: list[FileChange] = field(default_factory=list)
     commit_message: str = ""
     explanation: str = ""
+    usage: UsageStats = field(default_factory=UsageStats)
+
+
+def _extract_usage(response: object) -> UsageStats:
+    """Extract token usage from an OpenAI-compatible API response."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return UsageStats()
+    return UsageStats(
+        prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+        completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+        total_tokens=getattr(usage, "total_tokens", 0) or 0,
+    )
 
 
 class Fixer:
@@ -297,7 +310,9 @@ class Fixer:
             ],
         )
         raw = response.choices[0].message.content or ""
-        return _parse_response(raw)
+        patch = _parse_response(raw)
+        patch.usage += _extract_usage(response)
+        return patch
 
     async def _agentic_fix(
         self,
@@ -326,13 +341,17 @@ class Fixer:
             raw = response.choices[0].message.content or ""
             if raw:
                 logger.info("fast-path fix for format/lint error (no tools needed)")
-                return _parse_response(raw)
+                patch = _parse_response(raw)
+                patch.usage += _extract_usage(response)
+                return patch
             return FixPatch(
                 changes=[],
                 commit_message="fix: automated fix by stitch-agent",
                 explanation="Fast-path fix produced no output",
+                usage=_extract_usage(response),
             )
 
+        cumulative_usage = UsageStats()
         for round_num in range(_MAX_TOOL_ROUNDS):
             response = await client.chat.completions.create(
                 model=model,
@@ -340,6 +359,7 @@ class Fixer:
                 messages=messages,
                 tools=_TOOLS,
             )
+            cumulative_usage += _extract_usage(response)
 
             choice = response.choices[0]
 
@@ -348,7 +368,9 @@ class Fixer:
                 raw = choice.message.content or ""
                 if raw:
                     logger.info("agentic fix completed after %d tool rounds", round_num)
-                    return _parse_response(raw)
+                    patch = _parse_response(raw)
+                    patch.usage += cumulative_usage
+                    return patch
                 if not choice.message.tool_calls:
                     break
 
@@ -384,6 +406,7 @@ class Fixer:
             changes=[],
             commit_message="fix: automated fix by stitch-agent",
             explanation="Exhausted tool rounds without producing a fix",
+            usage=cumulative_usage,
         )
 
 
