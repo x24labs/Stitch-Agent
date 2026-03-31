@@ -28,7 +28,7 @@ Failed pipeline ──> stitch ──> fix branch ──> CI verifies ──> PR
 - **Zero infrastructure** — runs as a CI job, not a separate service. Nothing to deploy or maintain.
 - **Self-healing** — if the first fix doesn't pass CI, stitch retries with model escalation. Only escalates to humans after exhausting all attempts.
 - **Safe by design** — every patch goes through programmatic validation before pushing: diff ratio limits, signature preservation, export protection, import guards. The LLM can't rewrite your codebase.
-- **Cost-aware** — simple errors (lint, format, types) use a fast, cheap model. Complex errors escalate to a heavier model. You only pay for what you need.
+- **Cost-transparent** — every fix reports exact token usage and real cost in USD. Simple errors use a fast, cheap model; complex errors escalate to a heavier model. You always know what you're spending.
 - **Model-agnostic** — powered by [OpenRouter](https://openrouter.ai), giving you access to 200+ models. Choose the best price/performance ratio for your needs.
 - **Platform-agnostic** — GitLab and GitHub, including self-hosted instances.
 
@@ -142,6 +142,44 @@ jobs:
 | **Retry** | CI fails on `stitch/fix-*` | Retries on the same branch, escalating model after 2 attempts |
 | **Verify** | CI passes on `stitch/fix-*` | Creates PR targeting your original branch |
 | **Exhaust** | Max retries reached | Notifies team via Slack/webhook |
+
+### Cost visibility
+
+Every stitch run reports exactly what it consumed — no surprises on your OpenRouter bill:
+
+```
+  ┌─────────────────────────────────────────┐
+  │  Stitch Agent v0.6.2                    │
+  │  The AI that stitches your CI back      │
+  │  together.                              │
+  ├─────────────────────────────────────────┤
+  │  Platform:  gitlab                      │
+  │  Mode:      FIX                         │
+  │  Branch:    main                        │
+  │  Pipeline:  3692                        │
+  └─────────────────────────────────────────┘
+
+✅ [lint] Fixed
+   Reason: Removed unused import os
+   Branch: stitch/fix-3692
+   Tokens: 1,234 in / 567 out (1,801 total) — $0.0003
+```
+
+Token counts come directly from the API response (zero overhead). Cost is fetched from OpenRouter's generation API — the actual amount charged, not an estimate.
+
+JSON output includes the full breakdown:
+
+```json
+{
+  "status": "fixed",
+  "usage": {
+    "prompt_tokens": 1234,
+    "completion_tokens": 567,
+    "total_tokens": 1801,
+    "cost_usd": 0.000312
+  }
+}
+```
 
 ### Error classification
 
@@ -332,8 +370,9 @@ request = FixRequest(
 async def main():
     async with adapter:
         result = await agent.fix(request)
-    print(result.status)   # 'fixed' | 'escalate' | 'error'
-    print(result.mr_url)   # PR URL if fixed
+    print(result.status)       # 'fixed' | 'escalate' | 'error'
+    print(result.mr_url)       # PR URL if fixed
+    print(result.usage.cost_usd)  # actual cost in USD
 
 asyncio.run(main())
 ```
