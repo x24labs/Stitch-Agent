@@ -197,8 +197,7 @@ class GitLabAdapter(CIPlatformAdapter):
         self, project_id: str, pipeline_id: str
     ) -> list[dict[str, str | int]]:
         resp = await self._client.get(
-            f"{self._pid(project_id)}/pipelines/{pipeline_id}/jobs",
-            params={"scope[]": "failed"},
+            f"{self._pid(project_id)}/pipelines/{pipeline_id}/jobs?scope[]=failed",
         )
         resp.raise_for_status()
         return [

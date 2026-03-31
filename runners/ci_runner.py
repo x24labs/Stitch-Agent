@@ -540,7 +540,7 @@ def _print_text_results(results: list[dict[str, object]]) -> None:
         status = str(r.get("status", "error"))
         icon = icons.get(status, "?")
         job_label = r.get("job_name") or r.get("job_id", "?")
-        print(f"{icon} [{job_label}] {status}")
+        print(f"{icon} [{job_label}] {status.capitalize()}")
         if r.get("reason"):
             print(f"   Reason: {r['reason']}")
         if r.get("fix_branch"):
