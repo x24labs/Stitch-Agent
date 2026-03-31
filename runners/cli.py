@@ -155,7 +155,8 @@ async def run_fix(args: argparse.Namespace) -> int:
 
     agent = StitchAgent(
         adapter=adapter,
-        anthropic_api_key=settings.anthropic_api_key,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
         haiku_confidence_threshold=haiku_thresh,
         sonnet_confidence_threshold=sonnet_thresh,
         max_attempts=settings.max_attempts,

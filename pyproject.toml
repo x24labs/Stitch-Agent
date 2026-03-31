@@ -1,6 +1,6 @@
 [project]
 name = "stitch-agent"
-version = "0.4.4"
+version = "0.5.0"
 description = "The AI that stitches your CI back together"
 readme = "README.md"
 license = { text = "MIT" }
@@ -16,7 +16,7 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
-    "anthropic>=0.40.0",
+    "openai>=1.50.0",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "httpx>=0.27",

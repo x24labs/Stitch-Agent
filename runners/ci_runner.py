@@ -326,7 +326,8 @@ async def _handle_fix_failed(
 
     agent = StitchAgent(
         adapter=adapter,
-        anthropic_api_key=settings.anthropic_api_key,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
         haiku_confidence_threshold=settings.haiku_confidence_threshold,
         sonnet_confidence_threshold=settings.sonnet_confidence_threshold,
         max_attempts=max_retry,
@@ -442,7 +443,8 @@ async def _run_fix_mode(
 
     agent = StitchAgent(
         adapter=adapter,
-        anthropic_api_key=settings.anthropic_api_key,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
         haiku_confidence_threshold=settings.haiku_confidence_threshold,
         sonnet_confidence_threshold=settings.sonnet_confidence_threshold,
         max_attempts=settings.max_attempts,

@@ -18,7 +18,7 @@ class ErrorType(StrEnum):
     UNKNOWN = "unknown"
 
 
-HAIKU_TYPES: frozenset[ErrorType] = frozenset(
+LIGHT_TYPES: frozenset[ErrorType] = frozenset(
     {
         ErrorType.LINT,
         ErrorType.FORMAT,
@@ -28,7 +28,7 @@ HAIKU_TYPES: frozenset[ErrorType] = frozenset(
     }
 )
 
-SONNET_TYPES: frozenset[ErrorType] = frozenset(
+HEAVY_TYPES: frozenset[ErrorType] = frozenset(
     {
         ErrorType.COMPLEX_TYPE,
         ErrorType.TEST_CONTRACT,
@@ -39,14 +39,23 @@ SONNET_TYPES: frozenset[ErrorType] = frozenset(
 
 ESCALATION_TYPES: frozenset[ErrorType] = frozenset()
 
-HAIKU_MODEL = "claude-haiku-4-5-20251001"
-SONNET_MODEL = "claude-sonnet-4-6"
+# Kept as aliases for backward compatibility in tests/imports
+HAIKU_TYPES = LIGHT_TYPES
+SONNET_TYPES = HEAVY_TYPES
+
+DEFAULT_CLASSIFIER_MODEL = "google/gemini-2.5-flash-lite"
+DEFAULT_LIGHT_MODEL = "google/gemini-2.5-flash-lite"
+DEFAULT_HEAVY_MODEL = "google/gemini-2.5-flash"
+
+# Legacy aliases (used by retry_fix escalation)
+HAIKU_MODEL = DEFAULT_LIGHT_MODEL
+SONNET_MODEL = DEFAULT_HEAVY_MODEL
 
 
-def select_model(error_type: ErrorType) -> str:
-    if error_type in HAIKU_TYPES:
-        return HAIKU_MODEL
-    return SONNET_MODEL
+def select_model(error_type: ErrorType, light: str | None = None, heavy: str | None = None) -> str:
+    if error_type in LIGHT_TYPES:
+        return light or DEFAULT_LIGHT_MODEL
+    return heavy or DEFAULT_HEAVY_MODEL
 
 
 class FixRequest(BaseModel):
@@ -122,6 +131,12 @@ class ValidationResult(BaseModel):
     violations: list[PatchViolation] = Field(default_factory=list)
 
 
+class ModelConfig(BaseModel):
+    classifier: str = DEFAULT_CLASSIFIER_MODEL
+    light: str = DEFAULT_LIGHT_MODEL
+    heavy: str = DEFAULT_HEAVY_MODEL
+
+
 class StitchConfig(BaseModel):
     languages: list[str] = Field(default_factory=list)
     linter: str | None = None
@@ -143,3 +158,4 @@ class StitchConfig(BaseModel):
     notify: NotifyConfig = Field(default_factory=NotifyConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
     max_attempts: int = Field(default=3, ge=1, le=10)
+    models: ModelConfig = Field(default_factory=ModelConfig)

@@ -22,6 +22,19 @@ def _make_classification(
     )
 
 
+def _mock_openai_response(text: str) -> MagicMock:
+    """Build a mock OpenAI ChatCompletion response."""
+    message = MagicMock()
+    message.content = text
+    message.tool_calls = None
+    choice = MagicMock()
+    choice.message = message
+    choice.finish_reason = "stop"
+    response = MagicMock()
+    response.choices = [choice]
+    return response
+
+
 def test_parse_response_valid_json() -> None:
     data = {
         "files": {"src/foo.py": "x = 1\n"},
@@ -70,36 +83,25 @@ def test_parse_response_non_string_values_ignored() -> None:
 
 @pytest.mark.asyncio
 async def test_generate_fix_calls_api_and_returns_patch() -> None:
-    from anthropic.types import TextBlock as ATextBlock
+    fix_json = json.dumps({
+        "files": {"src/main.py": "fixed content\n"},
+        "commit_message": "fix(lint): remove F401",
+        "explanation": "Removed unused import.",
+    })
+    mock_response = _mock_openai_response(fix_json)
 
-    mock_response = MagicMock()
-    mock_response.content = [
-        ATextBlock(
-            type="text",
-            text=json.dumps(
-                {
-                    "files": {"src/main.py": "fixed content\n"},
-                    "commit_message": "fix(lint): remove F401",
-                    "explanation": "Removed unused import.",
-                }
-            ),
-        )
-    ]
+    mock_client = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
-    with patch("anthropic.AsyncAnthropic") as mock_cls:
-        mock_client = AsyncMock()
-        mock_cls.return_value = mock_client
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
+    fixer = Fixer(api_key="test-key")
+    fixer._client = mock_client
 
-        fixer = Fixer(anthropic_api_key="test-key")
-        fixer._client = mock_client
-
-        classification = _make_classification(ErrorType.LINT)
-        result = await fixer.generate_fix(
-            classification=classification,
-            job_log="src/main.py:1:1: F401 unused import",
-            diff="--- a/src/main.py\n+++ b/src/main.py\n",
-        )
+    classification = _make_classification(ErrorType.LINT)
+    result = await fixer.generate_fix(
+        classification=classification,
+        job_log="src/main.py:1:1: F401 unused import",
+        diff="--- a/src/main.py\n+++ b/src/main.py\n",
+    )
 
     assert isinstance(result, FixPatch)
     assert result.changes[0].path == "src/main.py"
@@ -107,28 +109,27 @@ async def test_generate_fix_calls_api_and_returns_patch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_fix_selects_haiku_for_lint() -> None:
-    from stitch_agent.models import HAIKU_MODEL
+async def test_generate_fix_selects_light_model_for_lint() -> None:
+    from stitch_agent.models import DEFAULT_LIGHT_MODEL
 
-    mock_response = MagicMock()
-    mock_response.content = [
-        MagicMock(text='{"files": {}, "commit_message": "fix: x", "explanation": "e"}')
-    ]
+    mock_response = _mock_openai_response(
+        '{"files": {}, "commit_message": "fix: x", "explanation": "e"}'
+    )
 
-    with patch("anthropic.AsyncAnthropic"):
-        fixer = Fixer(anthropic_api_key="key")
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
-        fixer._client = mock_client
+    mock_client = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
-        await fixer.generate_fix(
-            classification=_make_classification(ErrorType.LINT),
-            job_log="error",
-            diff="",
-        )
+    fixer = Fixer(api_key="key")
+    fixer._client = mock_client
 
-    call_kwargs = mock_client.messages.create.call_args
-    assert call_kwargs.kwargs["model"] == HAIKU_MODEL
+    await fixer.generate_fix(
+        classification=_make_classification(ErrorType.LINT),
+        job_log="error",
+        diff="",
+    )
+
+    call_kwargs = mock_client.chat.completions.create.call_args
+    assert call_kwargs.kwargs["model"] == DEFAULT_LIGHT_MODEL
 
 
 def test_file_change_default_action() -> None:

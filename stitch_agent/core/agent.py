@@ -13,8 +13,7 @@ from stitch_agent.core.pr_creator import PRCreator
 from stitch_agent.history import HistoryStore, default_db_path
 from stitch_agent.models import (
     ESCALATION_TYPES,
-    HAIKU_TYPES,
-    SONNET_MODEL,
+    LIGHT_TYPES,
     ErrorType,
     FixRequest,
     FixResult,
@@ -33,27 +32,32 @@ class StitchAgent:
     def __init__(
         self,
         adapter: CIPlatformAdapter,
-        anthropic_api_key: str,
+        anthropic_api_key: str = "",
         haiku_confidence_threshold: float = 0.80,
         sonnet_confidence_threshold: float = 0.40,
         max_attempts: int = 3,
         escalation_callback: EscalationCallback | None = None,
         history_store: HistoryStore | None = None,
         workspace_root: str = "/tmp/stitch-workspace",
+        *,
+        api_key: str = "",
+        base_url: str | None = None,
     ) -> None:
         self.adapter = adapter
         self.haiku_confidence_threshold = haiku_confidence_threshold
         self.sonnet_confidence_threshold = sonnet_confidence_threshold
         self.max_attempts = max_attempts
         self.escalation_callback = escalation_callback
-        self.classifier = Classifier(api_key=anthropic_api_key)
-        self.fixer = Fixer(anthropic_api_key)
+        # api_key takes precedence; fall back to anthropic_api_key for compat
+        self._api_key = api_key or anthropic_api_key
+        self._base_url = base_url
+        self.classifier = Classifier(api_key=self._api_key, base_url=base_url)
+        self.fixer = Fixer(self._api_key, base_url=base_url)
         self.pr_creator = PRCreator(adapter)
-        self._api_key = anthropic_api_key
         self._history = history_store or HistoryStore(default_db_path(workspace_root))
 
     def _get_threshold(self, error_type: ErrorType) -> float:
-        if error_type in HAIKU_TYPES:
+        if error_type in LIGHT_TYPES:
             return self.haiku_confidence_threshold
         return self.sonnet_confidence_threshold
 
@@ -306,10 +310,10 @@ class StitchAgent:
         """
         config = await self._load_repo_config(request)
 
-        # Model escalation: first attempts use classified model, later → Sonnet
+        # Model escalation: first attempts use classified model, later → heavy model
         model_override: str | None = None
         if attempt >= 2:
-            model_override = SONNET_MODEL
+            model_override = config.models.heavy
 
         job_log = await self.adapter.fetch_job_logs(request)
         diff = await self.adapter.fetch_diff(request)
@@ -387,6 +391,6 @@ class StitchAgent:
         if raw is None:
             return StitchConfig()
         config = parse_config(raw)
-        self.classifier = Classifier(config=config, api_key=self._api_key)
-        self.fixer = Fixer(self._api_key, config=config)
+        self.classifier = Classifier(config=config, api_key=self._api_key, base_url=self._base_url)
+        self.fixer = Fixer(self._api_key, config=config, base_url=self._base_url)
         return config

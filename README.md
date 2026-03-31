@@ -28,7 +28,8 @@ Failed pipeline ──> stitch ──> fix branch ──> CI verifies ──> PR
 - **Zero infrastructure** — runs as a CI job, not a separate service. Nothing to deploy or maintain.
 - **Self-healing** — if the first fix doesn't pass CI, stitch retries with model escalation. Only escalates to humans after exhausting all attempts.
 - **Safe by design** — every patch goes through programmatic validation before pushing: diff ratio limits, signature preservation, export protection, import guards. The LLM can't rewrite your codebase.
-- **Cost-aware** — simple errors (lint, format, types) use the fast, cheap Haiku model. Complex errors escalate to Sonnet. You only pay for what you need.
+- **Cost-aware** — simple errors (lint, format, types) use a fast, cheap model. Complex errors escalate to a heavier model. You only pay for what you need.
+- **Model-agnostic** — powered by [OpenRouter](https://openrouter.ai), giving you access to 200+ models. Choose the best price/performance ratio for your needs.
 - **Platform-agnostic** — GitLab and GitHub, including self-hosted instances.
 
 ## Quick start
@@ -46,8 +47,8 @@ Requires Python 3.12+.
 Add these as CI/CD variables (Settings > CI/CD > Variables):
 
 ```bash
-STITCH_ANTHROPIC_API_KEY=sk-ant-...
-STITCH_GITLAB_TOKEN=glpat-...      # or STITCH_GITHUB_TOKEN for GitHub
+STITCH_OPENROUTER_API_KEY=sk-or-...    # Get one at https://openrouter.ai/keys
+STITCH_GITLAB_TOKEN=glpat-...          # or STITCH_GITHUB_TOKEN for GitHub
 ```
 
 > **Important:** In GitLab, uncheck **"Protect variable"** for both variables. stitch pushes fixes to `stitch/fix-*` branches, which are not protected by default. Protected variables are only injected into protected branches, so stitch won't be able to authenticate on fix branches if the variables are protected.
@@ -108,7 +109,7 @@ jobs:
       - run: pip install stitch-agent
       - run: stitch ci
         env:
-          STITCH_ANTHROPIC_API_KEY: ${{ secrets.STITCH_ANTHROPIC_API_KEY }}
+          STITCH_OPENROUTER_API_KEY: ${{ secrets.STITCH_OPENROUTER_API_KEY }}
           STITCH_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   check:
@@ -119,7 +120,7 @@ jobs:
       - run: pip install stitch-agent
       - run: stitch ci
         env:
-          STITCH_ANTHROPIC_API_KEY: ${{ secrets.STITCH_ANTHROPIC_API_KEY }}
+          STITCH_OPENROUTER_API_KEY: ${{ secrets.STITCH_OPENROUTER_API_KEY }}
           STITCH_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
@@ -128,7 +129,7 @@ jobs:
 **Done.** When a pipeline fails, stitch pushes a fix to a `stitch/fix-*` branch. CI runs on that branch:
 
 - **CI passes** → stitch creates the PR automatically
-- **CI fails** → stitch retries on the same branch (escalating to Sonnet after 2 attempts)
+- **CI fails** → stitch retries on the same branch (escalating to the heavy model after 2 attempts)
 - **All retries exhausted** → stitch notifies your team for human review
 
 > **Loop prevention:** The `except`/`only` rules (GitLab) and branch conditions (GitHub) ensure stitch only fixes normal branches. `max_attempts` (default 3) caps retries.
@@ -146,17 +147,40 @@ jobs:
 
 stitch classifies errors to choose the right model and strategy:
 
-| Type | Model | Examples |
-|------|-------|---------|
-| `lint` | Haiku | Unused imports, missing semicolons, style violations |
-| `format` | Haiku | Indentation, trailing whitespace, line length |
-| `simple_type` | Haiku | Missing type annotations, basic type mismatches |
-| `config_ci` | Haiku | YAML syntax, missing CI variables, stage ordering |
-| `build` | Haiku | Missing dependencies, import errors, module resolution |
-| `complex_type` | Sonnet | Generic type inference, conditional types, overloads |
-| `test_contract` | Sonnet | Broken test assertions, mock mismatches, fixture errors |
-| `logic_error` | Sonnet | Off-by-one errors, incorrect conditions, edge cases |
-| `unknown` | Sonnet | Unclassified errors — Sonnet handles the ambiguity |
+| Type | Model tier | Examples |
+|------|-----------|---------|
+| `lint` | light | Unused imports, missing semicolons, style violations |
+| `format` | light | Indentation, trailing whitespace, line length |
+| `simple_type` | light | Missing type annotations, basic type mismatches |
+| `config_ci` | light | YAML syntax, missing CI variables, stage ordering |
+| `build` | light | Missing dependencies, import errors, module resolution |
+| `complex_type` | heavy | Generic type inference, conditional types, overloads |
+| `test_contract` | heavy | Broken test assertions, mock mismatches, fixture errors |
+| `logic_error` | heavy | Off-by-one errors, incorrect conditions, edge cases |
+| `unknown` | heavy | Unclassified errors — heavier model handles the ambiguity |
+
+Format and lint errors use a **fast-path**: file contents are pre-fetched and included in the prompt, skipping the tool-use investigation loop entirely (single API call instead of up to 15 rounds).
+
+### Model selection
+
+stitch uses [OpenRouter](https://openrouter.ai) to access any LLM. Three models are configured independently:
+
+| Role | Default | Used for |
+|------|---------|---------|
+| **classifier** | `google/gemini-2.5-flash-lite` | Error classification from CI logs |
+| **light** | `google/gemini-2.5-flash-lite` | Simple fixes (lint, format, types, CI config, build) |
+| **heavy** | `google/gemini-2.5-flash` | Complex fixes (type inference, test failures, logic errors) |
+
+Override any model via `.stitch.yml`:
+
+```yaml
+models:
+  classifier: deepseek/deepseek-chat-v3.1
+  light: qwen/qwen3.5-9b
+  heavy: x-ai/grok-4.1-fast
+```
+
+Browse available models at [openrouter.ai/models](https://openrouter.ai/models).
 
 ### Patch safety
 
@@ -175,8 +199,8 @@ If validation fails, stitch escalates instead of pushing broken code. All thresh
 ### Environment variables
 
 ```bash
-# Required
-STITCH_ANTHROPIC_API_KEY=sk-ant-...
+# Required — LLM access via OpenRouter
+STITCH_OPENROUTER_API_KEY=sk-or-...
 
 # Platform credentials (at least one)
 STITCH_GITLAB_TOKEN=glpat-...
@@ -186,9 +210,12 @@ STITCH_GITHUB_TOKEN=ghp_...
 STITCH_GITLAB_BASE_URL=https://gitlab.example.com
 STITCH_GITHUB_BASE_URL=https://github.example.com/api/v3
 
+# Custom OpenRouter endpoint (optional)
+STITCH_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+
 # Tuning (optional)
-STITCH_HAIKU_CONFIDENCE_THRESHOLD=0.80    # default
-STITCH_SONNET_CONFIDENCE_THRESHOLD=0.40   # default
+STITCH_HAIKU_CONFIDENCE_THRESHOLD=0.80    # threshold for light model types
+STITCH_SONNET_CONFIDENCE_THRESHOLD=0.40   # threshold for heavy model types
 STITCH_MAX_ATTEMPTS=3                     # default
 ```
 
@@ -201,6 +228,12 @@ languages: [python, typescript]
 linter: ruff
 test_runner: pytest
 package_manager: pip
+
+# Choose your models (any OpenRouter model ID)
+models:
+  classifier: google/gemini-2.5-flash-lite
+  light: google/gemini-2.5-flash-lite
+  heavy: google/gemini-2.5-flash
 
 conventions:
   - "Always use explicit return types on public functions."
@@ -234,7 +267,8 @@ async def on_escalate(request, result):
 
 agent = StitchAgent(
     adapter=adapter,
-    anthropic_api_key="sk-ant-...",
+    api_key="sk-or-...",
+    base_url="https://openrouter.ai/api/v1",
     escalation_callback=on_escalate,
 )
 ```
@@ -248,6 +282,7 @@ stitch ci                          # auto-detect platform, fix failed jobs
 stitch ci --output json            # machine-readable output
 stitch ci --platform gitlab        # override auto-detection
 stitch ci --max-jobs 3             # limit jobs processed (default 5)
+stitch ci -v                       # verbose debug output
 ```
 
 Platform is auto-detected from environment variables (`CI_PROJECT_ID` for GitLab, `GITHUB_REPOSITORY` for GitHub).
@@ -280,7 +315,11 @@ from stitch_agent import StitchAgent, FixRequest
 from stitch_agent.adapters.gitlab import GitLabAdapter
 
 adapter = GitLabAdapter(token="glpat-...", base_url="https://gitlab.com")
-agent = StitchAgent(adapter=adapter, anthropic_api_key="sk-ant-...")
+agent = StitchAgent(
+    adapter=adapter,
+    api_key="sk-or-...",
+    base_url="https://openrouter.ai/api/v1",
+)
 
 request = FixRequest(
     platform="gitlab",
@@ -308,13 +347,13 @@ stitch_agent/
 ├── adapters/              # Platform integrations (GitLab, GitHub)
 ├── core/
 │   ├── agent.py           # Fix loop + retry logic
-│   ├── classifier.py      # Error detection (150+ patterns)
-│   ├── fixer.py           # Claude-powered patch generation
+│   ├── classifier.py      # Error detection (LLM + 150+ regex patterns)
+│   ├── fixer.py           # LLM-powered patch generation (agentic + fast-path)
 │   ├── patch_validator.py # Programmatic patch safety checks
 │   ├── pr_creator.py      # MR/PR creation
 │   └── notifier.py        # Multi-channel notifications
 ├── onboarding/            # setup, doctor commands
-├── models.py              # FixRequest, FixResult, ErrorType, ValidationConfig
+├── models.py              # FixRequest, FixResult, ErrorType, ModelConfig
 ├── history.py             # SQLite fix tracking
 ├── settings.py            # Environment configuration
 └── config.py              # .stitch.yml parsing
@@ -323,6 +362,16 @@ runners/
 ├── cli.py                 # CLI entry point
 └── ci_runner.py           # CI-native runner (fix, verify, retry)
 ```
+
+## Migrating from v0.4.x
+
+v0.5.0 switches from the Anthropic API to [OpenRouter](https://openrouter.ai) for LLM access:
+
+1. **Get an OpenRouter API key** at [openrouter.ai/keys](https://openrouter.ai/keys)
+2. **Replace** `STITCH_ANTHROPIC_API_KEY` with `STITCH_OPENROUTER_API_KEY` in your CI variables
+3. **Optional:** customize models in `.stitch.yml` (defaults are Gemini 2.5 Flash Lite for light tasks, Gemini 2.5 Flash for heavy tasks)
+
+`STITCH_ANTHROPIC_API_KEY` is still supported as a fallback but routes through the Anthropic API directly (only works with Claude models).
 
 ## Contributing
 

@@ -1,4 +1,4 @@
-"""Agentic error classifier — uses Haiku to analyze CI job logs.
+"""Agentic error classifier — uses an LLM to analyze CI job logs.
 
 Replaces regex-based classification with an LLM call for accurate
 error type detection, affected file extraction, and model selection.
@@ -10,10 +10,9 @@ import json
 import logging
 import re
 
-import anthropic
-from anthropic.types import TextBlock
+from openai import AsyncOpenAI
 
-from stitch_agent.models import HAIKU_MODEL, ClassificationResult, ErrorType, StitchConfig
+from stitch_agent.models import DEFAULT_CLASSIFIER_MODEL, ClassificationResult, ErrorType, StitchConfig
 
 logger = logging.getLogger("stitch_agent")
 
@@ -35,7 +34,7 @@ _CLASSIFY_SYSTEM = (
     '  "confidence": 0.0-1.0,\n'
     '  "summary": "one-line description of the error",\n'
     '  "affected_files": ["file paths that need to be fixed"],\n'
-    '  "model": "haiku" or "sonnet"\n'
+    '  "model": "light" or "heavy"\n'
     "}\n\n"
     "Rules for affected_files:\n"
     "- Include the ACTUAL files that need to change to fix the error.\n"
@@ -44,26 +43,35 @@ _CLASSIFY_SYSTEM = (
     "- Include config files (pyproject.toml, package.json) when relevant.\n"
     "- Do NOT include files that are only mentioned in stack traces but don't need changes.\n\n"
     "Rules for model selection:\n"
-    "- haiku: lint, format, simple_type, config_ci, build (straightforward fixes)\n"
-    "- sonnet: complex_type, test_contract, logic_error, unknown (need deeper reasoning)\n"
+    "- light: lint, format, simple_type, config_ci, build (straightforward fixes)\n"
+    "- heavy: complex_type, test_contract, logic_error, unknown (need deeper reasoning)\n"
 )
 
 _MAX_LOG_CHARS = 12_000
 
 
 class Classifier:
-    def __init__(self, config: StitchConfig | None = None, api_key: str = "") -> None:
+    def __init__(
+        self,
+        config: StitchConfig | None = None,
+        api_key: str = "",
+        base_url: str | None = None,
+    ) -> None:
         self.config = config or StitchConfig()
         self._api_key = api_key
-        self._client: anthropic.AsyncAnthropic | None = None
+        self._base_url = base_url
+        self._client: AsyncOpenAI | None = None
 
-    def _get_client(self) -> anthropic.AsyncAnthropic:
+    def _get_client(self) -> AsyncOpenAI:
         if self._client is None:
-            self._client = anthropic.AsyncAnthropic(api_key=self._api_key)
+            self._client = AsyncOpenAI(
+                api_key=self._api_key,
+                base_url=self._base_url,
+            )
         return self._client
 
     async def classify(self, job_log: str, diff: str | None = None) -> ClassificationResult:
-        """Classify a CI job failure using Haiku."""
+        """Classify a CI job failure using the classifier model."""
         if not self._api_key:
             logger.warning("No API key for agentic classifier, falling back to regex")
             return _regex_fallback(job_log)
@@ -82,15 +90,18 @@ class Classifier:
         if diff:
             prompt += f"\n\n## Diff that triggered this pipeline\n```diff\n{diff[:4000]}\n```"
 
+        model = self.config.models.classifier
         client = self._get_client()
-        message = await client.messages.create(
-            model=HAIKU_MODEL,
+        response = await client.chat.completions.create(
+            model=model,
             max_tokens=1024,
-            system=_CLASSIFY_SYSTEM,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": _CLASSIFY_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
         )
 
-        raw = next((b.text for b in message.content if isinstance(b, TextBlock)), "")
+        raw = response.choices[0].message.content or ""
         return _parse_classification(raw)
 
 

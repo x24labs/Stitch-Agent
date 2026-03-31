@@ -13,8 +13,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-import anthropic
-from anthropic.types import MessageParam, TextBlock, ToolParam, ToolUseBlock
+from openai import AsyncOpenAI
 
 from stitch_agent.models import ClassificationResult, ErrorType, StitchConfig, select_model
 
@@ -56,57 +55,66 @@ _SYSTEM_PROMPT = (
     "- ALWAYS produce a fix. An empty files dict means the CI stays broken.\n"
 )
 
-_TOOLS: list[ToolParam] = [
+_TOOLS = [
     {
-        "name": "search_codebase",
-        "description": (
-            "Search for a pattern in the codebase. Returns matching file paths, "
-            "line numbers, and snippets. Use this to find where a specific string, "
-            "flag, function, or config option is defined or used."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "pattern": {
-                    "type": "string",
-                    "description": "Search pattern (e.g. '--cov-data-file', 'def broken_func', 'COVERAGE_FILE')",
+        "type": "function",
+        "function": {
+            "name": "search_codebase",
+            "description": (
+                "Search for a pattern in the codebase. Returns matching file paths, "
+                "line numbers, and snippets. Use this to find where a specific string, "
+                "flag, function, or config option is defined or used."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Search pattern (e.g. '--cov-data-file', 'def broken_func', 'COVERAGE_FILE')",
+                    },
                 },
+                "required": ["pattern"],
             },
-            "required": ["pattern"],
         },
     },
     {
-        "name": "read_file",
-        "description": (
-            "Read the full content of a file. Use this to understand the code "
-            "before producing a fix. Returns the file content with line numbers."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "File path relative to repo root (e.g. '.gitlab-ci.yml', 'src/main.py')",
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": (
+                "Read the full content of a file. Use this to understand the code "
+                "before producing a fix. Returns the file content with line numbers."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path relative to repo root (e.g. '.gitlab-ci.yml', 'src/main.py')",
+                    },
                 },
+                "required": ["path"],
             },
-            "required": ["path"],
         },
     },
     {
-        "name": "list_directory",
-        "description": (
-            "List files and directories at a given path. Use this to explore "
-            "the repository structure when you need to find config files or source directories."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Directory path (empty string for repo root)",
+        "type": "function",
+        "function": {
+            "name": "list_directory",
+            "description": (
+                "List files and directories at a given path. Use this to explore "
+                "the repository structure when you need to find config files or source directories."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Directory path (empty string for repo root)",
+                    },
                 },
+                "required": ["path"],
             },
-            "required": ["path"],
         },
     },
 ]
@@ -178,14 +186,23 @@ class FixPatch:
 
 
 class Fixer:
-    def __init__(self, anthropic_api_key: str, config: StitchConfig | None = None) -> None:
-        self.anthropic_api_key = anthropic_api_key
+    def __init__(
+        self,
+        api_key: str,
+        config: StitchConfig | None = None,
+        base_url: str | None = None,
+    ) -> None:
+        self.api_key = api_key
         self.config = config or StitchConfig()
-        self._client: anthropic.AsyncAnthropic | None = None
+        self._base_url = base_url
+        self._client: AsyncOpenAI | None = None
 
-    def _get_client(self) -> anthropic.AsyncAnthropic:
+    def _get_client(self) -> AsyncOpenAI:
         if self._client is None:
-            self._client = anthropic.AsyncAnthropic(api_key=self.anthropic_api_key)
+            self._client = AsyncOpenAI(
+                api_key=self.api_key,
+                base_url=self._base_url,
+            )
         return self._client
 
     async def generate_fix(
@@ -199,7 +216,11 @@ class Fixer:
         adapter: CIPlatformAdapter | None = None,
         request: FixRequest | None = None,
     ) -> FixPatch:
-        model = model_override or select_model(classification.error_type)
+        model = model_override or select_model(
+            classification.error_type,
+            light=self.config.models.light,
+            heavy=self.config.models.heavy,
+        )
         client = self._get_client()
 
         # Build initial prompt with error context
@@ -261,21 +282,23 @@ class Fixer:
         return await self._single_shot_fix(client, model, prompt)
 
     async def _single_shot_fix(
-        self, client: anthropic.AsyncAnthropic, model: str, prompt: str,
+        self, client: AsyncOpenAI, model: str, prompt: str,
     ) -> FixPatch:
         """Single-shot fix without tools (backward compatible)."""
-        message = await client.messages.create(
+        response = await client.chat.completions.create(
             model=model,
             max_tokens=16_384,
-            system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
         )
-        raw = next((b.text for b in message.content if isinstance(b, TextBlock)), "")
+        raw = response.choices[0].message.content or ""
         return _parse_response(raw)
 
     async def _agentic_fix(
         self,
-        client: anthropic.AsyncAnthropic,
+        client: AsyncOpenAI,
         model: str,
         prompt: str,
         adapter: CIPlatformAdapter,
@@ -284,20 +307,20 @@ class Fixer:
         skip_tools: bool = False,
     ) -> FixPatch:
         """Agentic fix with tool use — the LLM investigates before fixing."""
-        messages: list[MessageParam] = [{"role": "user", "content": prompt}]
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
 
         # Fast path: FORMAT/LINT errors already have file contents in the prompt,
         # so skip tools entirely and let the LLM produce the fix in one shot.
         if skip_tools:
-            response = await client.messages.create(
+            response = await client.chat.completions.create(
                 model=model,
                 max_tokens=16_384,
-                system=_SYSTEM_PROMPT,
                 messages=messages,
             )
-            raw = next(
-                (b.text for b in response.content if isinstance(b, TextBlock)), ""
-            )
+            raw = response.choices[0].message.content or ""
             if raw:
                 logger.info("fast-path fix for format/lint error (no tools needed)")
                 return _parse_response(raw)
@@ -308,56 +331,50 @@ class Fixer:
             )
 
         for round_num in range(_MAX_TOOL_ROUNDS):
-            response = await client.messages.create(
+            response = await client.chat.completions.create(
                 model=model,
                 max_tokens=16_384,
-                system=_SYSTEM_PROMPT,
                 messages=messages,
                 tools=_TOOLS,
             )
 
-            # Check if the LLM is done (produced text with the fix)
-            if response.stop_reason == "end_turn":
-                raw = next(
-                    (b.text for b in response.content if isinstance(b, TextBlock)), ""
-                )
+            choice = response.choices[0]
+
+            # Check if the LLM is done (no tool calls — produced text with the fix)
+            if choice.finish_reason == "stop" or not choice.message.tool_calls:
+                raw = choice.message.content or ""
                 if raw:
                     logger.info("agentic fix completed after %d tool rounds", round_num)
                     return _parse_response(raw)
+                if not choice.message.tool_calls:
+                    break
 
             # Process tool calls
-            tool_blocks = [b for b in response.content if isinstance(b, ToolUseBlock)]
-            if not tool_blocks:
-                # No tools and no text — extract any text we can
-                raw = next(
-                    (b.text for b in response.content if isinstance(b, TextBlock)), ""
-                )
-                if raw:
-                    return _parse_response(raw)
-                break
+            tool_calls = choice.message.tool_calls or []
 
-            # Add assistant message with all content blocks
-            messages.append({"role": "assistant", "content": response.content})  # type: ignore[arg-type]
+            # Add assistant message to conversation
+            messages.append(choice.message.model_dump())  # type: ignore[arg-type]
 
             # Execute tools and collect results
-            tool_results: list[dict[str, Any]] = []
-            for tool_block in tool_blocks:
-                result = await _execute_tool(
-                    tool_block.name, tool_block.input, adapter, request
-                )
+            for tool_call in tool_calls:
+                fn = tool_call.function
+                try:
+                    args = json.loads(fn.arguments)
+                except json.JSONDecodeError:
+                    args = {}
+
+                result = await _execute_tool(fn.name, args, adapter, request)
                 logger.debug(
                     "tool %s(%s) → %d chars",
-                    tool_block.name,
-                    json.dumps(tool_block.input)[:100],
+                    fn.name,
+                    fn.arguments[:100],
                     len(result),
                 )
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tool_block.id,
-                    "content": result[:16_000],  # cap tool output
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": result[:16_000],
                 })
-
-            messages.append({"role": "user", "content": tool_results})  # type: ignore[arg-type]
 
         logger.warning("agentic fix exhausted %d tool rounds", _MAX_TOOL_ROUNDS)
         return FixPatch(
