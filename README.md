@@ -363,16 +363,6 @@ runners/
 └── ci_runner.py           # CI-native runner (fix, verify, retry)
 ```
 
-## Migrating from v0.4.x
-
-v0.5.0 switches from the Anthropic API to [OpenRouter](https://openrouter.ai) for LLM access:
-
-1. **Get an OpenRouter API key** at [openrouter.ai/keys](https://openrouter.ai/keys)
-2. **Replace** `STITCH_ANTHROPIC_API_KEY` with `STITCH_OPENROUTER_API_KEY` in your CI variables
-3. **Optional:** customize models in `.stitch.yml` (defaults are Gemini 2.5 Flash Lite for light tasks, Gemini 2.5 Flash for heavy tasks)
-
-`STITCH_ANTHROPIC_API_KEY` is still supported as a fallback but routes through the Anthropic API directly (only works with Claude models).
-
 ## Contributing
 
 Contributions are welcome. Please open an issue first to discuss what you'd like to change.
