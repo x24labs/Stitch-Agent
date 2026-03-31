@@ -16,7 +16,13 @@ from typing import TYPE_CHECKING, Literal
 
 from openai import AsyncOpenAI
 
-from stitch_agent.models import ClassificationResult, ErrorType, StitchConfig, UsageStats, select_model
+from stitch_agent.models import (
+    ClassificationResult,
+    ErrorType,
+    StitchConfig,
+    UsageStats,
+    select_model,
+)
 
 if TYPE_CHECKING:
     from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
