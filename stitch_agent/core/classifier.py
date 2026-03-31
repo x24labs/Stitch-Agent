@@ -12,7 +12,11 @@ import re
 
 from openai import AsyncOpenAI
 
-from stitch_agent.models import DEFAULT_CLASSIFIER_MODEL, ClassificationResult, ErrorType, StitchConfig
+from stitch_agent.models import (
+    ClassificationResult,
+    ErrorType,
+    StitchConfig,
+)
 
 logger = logging.getLogger("stitch_agent")
 

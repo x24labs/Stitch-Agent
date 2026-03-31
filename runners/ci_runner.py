@@ -19,9 +19,8 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from typing import Literal
-
 from importlib.metadata import version as pkg_version
+from typing import Literal
 
 from stitch_agent.core.agent import StitchAgent
 from stitch_agent.models import FixRequest

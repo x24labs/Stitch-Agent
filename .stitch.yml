@@ -4,9 +4,9 @@ test_runner: pytest
 package_manager: pip
 
 models:
-  classifier: google/gemini-2.5-flash-lite
-  light: google/gemini-2.5-flash-lite
-  heavy: google/gemini-2.5-flash
+  classifier: deepseek/deepseek-chat-v3.1
+  light: qwen/qwen3.5-9b
+  heavy: x-ai/grok-4.1-fast
 
 max_attempts: 3
 

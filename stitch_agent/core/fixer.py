@@ -11,13 +11,15 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from openai import AsyncOpenAI
 
 from stitch_agent.models import ClassificationResult, ErrorType, StitchConfig, select_model
 
 if TYPE_CHECKING:
+    from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
+
     from stitch_agent.adapters.base import CIPlatformAdapter
     from stitch_agent.models import FixRequest
 
@@ -55,7 +57,7 @@ _SYSTEM_PROMPT = (
     "- ALWAYS produce a fix. An empty files dict means the CI stays broken.\n"
 )
 
-_TOOLS = [
+_TOOLS: list[ChatCompletionToolParam] = [
     {
         "type": "function",
         "function": {
@@ -307,7 +309,7 @@ class Fixer:
         skip_tools: bool = False,
     ) -> FixPatch:
         """Agentic fix with tool use — the LLM investigates before fixing."""
-        messages: list[dict[str, Any]] = [
+        messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
@@ -353,11 +355,11 @@ class Fixer:
             tool_calls = choice.message.tool_calls or []
 
             # Add assistant message to conversation
-            messages.append(choice.message.model_dump())  # type: ignore[arg-type]
+            messages.append({"role": "assistant", "content": choice.message.content, "tool_calls": [tc.model_dump() for tc in tool_calls]})  # type: ignore[typeddict-item]
 
             # Execute tools and collect results
             for tool_call in tool_calls:
-                fn = tool_call.function
+                fn = tool_call.function  # type: ignore[union-attr]
                 try:
                     args = json.loads(fn.arguments)
                 except json.JSONDecodeError:
