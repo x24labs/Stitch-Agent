@@ -21,6 +21,8 @@ import sys
 from dataclasses import dataclass
 from typing import Literal
 
+from importlib.metadata import version as pkg_version
+
 from stitch_agent.core.agent import StitchAgent
 from stitch_agent.models import FixRequest
 from stitch_agent.settings import StitchSettings
@@ -33,6 +35,34 @@ def _setup_logging(verbose: bool) -> None:
     logger = logging.getLogger("stitch_agent")
     logger.setLevel(level)
     logger.addHandler(handler)
+
+
+def _get_version() -> str:
+    try:
+        return pkg_version("stitch-agent")
+    except Exception:
+        return "dev"
+
+
+def _print_banner(ctx: CIContext) -> None:
+    ver = _get_version()
+    mode = "RETRY" if _is_stitch_branch(ctx.branch) else "FIX"
+    branch = ctx.branch
+    pipeline = ctx.pipeline_id
+
+    print(
+        f"\n"
+        f"  ┌─────────────────────────────────────────┐\n"
+        f"  │  Stitch Agent v{ver:<25s}│\n"
+        f"  │  The AI that stitches your CI back      │\n"
+        f"  │  together.                              │\n"
+        f"  ├─────────────────────────────────────────┤\n"
+        f"  │  Platform:  {ctx.platform:<28s}│\n"
+        f"  │  Mode:      {mode:<28s}│\n"
+        f"  │  Branch:    {branch[:28]:<28s}│\n"
+        f"  │  Pipeline:  {pipeline[:28]:<28s}│\n"
+        f"  └─────────────────────────────────────────┘\n"
+    )
 
 _STITCH_BRANCH_RE = re.compile(r"^stitch/fix-")
 _TARGET_RE = re.compile(r"^Stitch-Target:\s*(.+)$", re.M)
@@ -494,6 +524,8 @@ async def run_ci(
     platform = detect_platform(platform_override)
     ctx = build_context(platform)
     settings = StitchSettings()
+
+    _print_banner(ctx)
 
     if _is_stitch_branch(ctx.branch):
         return await _run_stitch_branch_mode(ctx, platform, settings, output_format)

@@ -1,6 +1,6 @@
 [project]
 name = "stitch-agent"
-version = "0.4.3"
+version = "0.4.4"
 description = "The AI that stitches your CI back together"
 readme = "README.md"
 license = { text = "MIT" }
