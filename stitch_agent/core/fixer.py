@@ -7,6 +7,7 @@ can find and fix the root cause autonomously.
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import re
@@ -435,11 +436,16 @@ def _parse_response(raw: str) -> FixPatch:
     try:
         data = json.loads(text)
     except (json.JSONDecodeError, ValueError):
-        return FixPatch(
-            changes=[],
-            commit_message="fix: automated fix by stitch-agent",
-            explanation=f"Could not parse model response. Raw: {raw[:200]}",
-        )
+        # Models sometimes return Python-style dicts (single quotes, True/False).
+        # Try ast.literal_eval as a fallback before giving up.
+        try:
+            data = ast.literal_eval(text)
+        except Exception:
+            return FixPatch(
+                changes=[],
+                commit_message="fix: automated fix by stitch-agent",
+                explanation=f"Could not parse model response. Raw: {raw[:200]}",
+            )
 
     files_dict = data.get("files", {})
     changes = [
