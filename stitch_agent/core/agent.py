@@ -385,6 +385,7 @@ class StitchAgent:
             model_override=model_override,
             adapter=self.adapter,
             request=request,
+            force_tools=True,
         )
 
         # Validate patch

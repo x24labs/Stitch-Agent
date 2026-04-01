@@ -6,6 +6,7 @@ before they get pushed to a fix branch.
 
 from __future__ import annotations
 
+import ast
 import difflib
 import os
 import re
@@ -195,10 +196,23 @@ class PatchValidator:
                 )
             )
 
+        # 3. Syntax validation for Python files
+        if lang == "python":
+            try:
+                ast.parse(change.new_content, filename=change.path)
+            except SyntaxError as exc:
+                violations.append(
+                    PatchViolation(
+                        file_path=change.path,
+                        check="syntax_error",
+                        detail=f"Generated code has invalid syntax: {exc}",
+                    )
+                )
+
         if lang is None:
             return violations
 
-        # 3. Export removal detection (always enforced)
+        # 4. Export removal detection (always enforced)
         if self.config.block_export_removal:
             violations.extend(
                 self._check_exports(change.path, original, change.new_content, lang)

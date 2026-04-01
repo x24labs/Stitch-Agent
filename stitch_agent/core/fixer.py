@@ -57,6 +57,7 @@ _SYSTEM_PROMPT = (
     "- Fix ONLY the specific error shown in the logs.\n"
     "- The files dict must contain COMPLETE new content for each file you change.\n"
     "- Do NOT include line numbers in file content.\n"
+    "- Do NOT wrap file content in markdown fences (no ```python or ```). Values must be raw source code.\n"
     "- Commit message must follow Conventional Commits: fix(scope): description\n"
     "- Be conservative: smallest change that fixes the error.\n"
     "- If the error comes from a CI command (wrong argument, missing tool), fix the CI config.\n"
@@ -240,6 +241,7 @@ class Fixer:
         model_override: str | None = None,
         adapter: CIPlatformAdapter | None = None,
         request: FixRequest | None = None,
+        force_tools: bool = False,
     ) -> FixPatch:
         model = model_override or select_model(
             classification.error_type,
@@ -274,7 +276,7 @@ class Fixer:
                 " — do NOT include in output)\n" + "\n\n".join(parts)
             )
 
-        is_fast_fix = classification.error_type in _FAST_FIX_TYPES
+        is_fast_fix = classification.error_type in _FAST_FIX_TYPES and not force_tools
 
         if is_fast_fix:
             prompt += (
@@ -455,6 +457,15 @@ async def _execute_tool(
         return f"Error: {exc}"
 
 
+def _strip_content_fences(content: str) -> str:
+    """Strip markdown code fences that LLMs sometimes wrap around file content."""
+    stripped = content.strip()
+    match = re.match(r"^```\w*\n(.*?)```\s*$", stripped, re.S)
+    if match:
+        return match.group(1)
+    return content
+
+
 def _parse_response(raw: str) -> FixPatch:
     text = raw.strip()
     fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
@@ -481,7 +492,7 @@ def _parse_response(raw: str) -> FixPatch:
 
     files_dict = data.get("files", {})
     changes = [
-        FileChange(path=path, new_content=content)
+        FileChange(path=path, new_content=_strip_content_fences(content))
         for path, content in files_dict.items()
         if isinstance(path, str) and isinstance(content, str)
     ]
