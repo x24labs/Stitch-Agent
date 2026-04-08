@@ -12,6 +12,24 @@ import re
 
 from openai import AsyncOpenAI
 
+
+def _normalize_path(path: str) -> str:
+    """Strip absolute CI build prefixes so paths are relative to the repo root.
+
+    GitLab CI: /builds/<namespace>/<project>/src/foo.ts -> src/foo.ts
+    GitHub Actions: /home/runner/work/<repo>/<repo>/src/foo.ts -> src/foo.ts
+    """
+    m = re.match(r"^/builds/[^/]+/[^/]+/(.+)$", path)
+    if m:
+        return m.group(1)
+    m = re.match(r"^/home/runner/work/[^/]+/[^/]+/(.+)$", path)
+    if m:
+        return m.group(1)
+    m = re.match(r"^/workspace/[^/]+/(.+)$", path)
+    if m:
+        return m.group(1)
+    return path
+
 from stitch_agent.models import (
     ClassificationResult,
     ErrorType,
@@ -154,7 +172,8 @@ def _parse_classification(raw: str) -> ClassificationResult:
 
     confidence = min(max(float(data.get("confidence", 0.5)), 0.0), 0.99)
     summary = data.get("summary", "CI job failed")
-    affected_files = [f for f in data.get("affected_files", []) if isinstance(f, str)]
+    raw_files = [f for f in data.get("affected_files", []) if isinstance(f, str)]
+    affected_files = [_normalize_path(f) for f in raw_files]
 
     return ClassificationResult(
         error_type=error_type,

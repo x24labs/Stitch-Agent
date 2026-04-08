@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from stitch_agent.config import parse_config
-from stitch_agent.core.classifier import Classifier
+from stitch_agent.core.classifier import Classifier, _normalize_path
 from stitch_agent.core.fixer import Fixer
 from stitch_agent.core.patch_validator import PatchValidator
 from stitch_agent.core.pr_creator import PRCreator
@@ -28,6 +28,7 @@ logger = logging.getLogger("stitch_agent")
 
 if TYPE_CHECKING:
     from stitch_agent.adapters.base import CIPlatformAdapter
+
 
 EscalationCallback = Callable[[FixRequest, FixResult], Awaitable[None]]
 
@@ -172,8 +173,9 @@ class StitchAgent:
         file_contents: dict[str, str] = {}
         fetch_failed: list[str] = []
         for file_path in classification.affected_files:
+            normalized = _normalize_path(file_path)
             try:
-                file_contents[file_path] = await self.adapter.fetch_file_content(request, file_path)
+                file_contents[normalized] = await self.adapter.fetch_file_content(request, normalized)
             except Exception:
                 fetch_failed.append(file_path)
                 continue
@@ -370,9 +372,10 @@ class StitchAgent:
 
         file_contents: dict[str, str] = {}
         for file_path in classification.affected_files:
+            normalized = _normalize_path(file_path)
             try:
-                file_contents[file_path] = await self.adapter.fetch_file_content(
-                    request, file_path
+                file_contents[normalized] = await self.adapter.fetch_file_content(
+                    request, normalized
                 )
             except Exception:
                 continue
