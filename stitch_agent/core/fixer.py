@@ -282,7 +282,7 @@ class Fixer:
             )
 
         max_file_lines = max(
-            (len(c.splitlines()) for c in file_contents.values()), default=0
+            (len(c.splitlines()) for c in (file_contents or {}).values()), default=0
         )
         file_too_large = max_file_lines > _FAST_FIX_MAX_LINES
         if file_too_large and classification.error_type in _FAST_FIX_TYPES:
