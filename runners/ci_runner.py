@@ -159,11 +159,21 @@ def _build_adapter(platform: Literal["gitlab", "github"], ctx: CIContext, settin
     if platform == "gitlab":
         from stitch_agent.adapters.gitlab import GitLabAdapter
 
+        if not settings.gitlab_token:
+            raise SystemExit(
+                "STITCH_GITLAB_TOKEN is not set. "
+                "Add it as a CI/CD variable with 'read_api' scope (or 'api' to allow MR creation)."
+            )
         base_url = ctx.base_url or settings.gitlab_base_url
         return GitLabAdapter(token=settings.gitlab_token, base_url=base_url)
 
     from stitch_agent.adapters.github import GitHubAdapter
 
+    if not settings.github_token:
+        raise SystemExit(
+            "STITCH_GITHUB_TOKEN is not set. "
+            "Add it as a repository secret with 'repo' scope."
+        )
     base_url = ctx.base_url or settings.github_base_url
     return GitHubAdapter(token=settings.github_token, base_url=base_url)
 
@@ -523,6 +533,8 @@ async def run_ci(
     max_jobs: int = 5,
     verbose: bool = False,
 ) -> int:
+    import httpx
+
     _setup_logging(verbose or os.environ.get("STITCH_VERBOSE", "") == "1")
     platform = detect_platform(platform_override)
     ctx = build_context(platform)
@@ -530,10 +542,18 @@ async def run_ci(
 
     _print_banner(ctx)
 
-    if _is_stitch_branch(ctx.branch):
-        return await _run_stitch_branch_mode(ctx, platform, settings, output_format)
+    try:
+        if _is_stitch_branch(ctx.branch):
+            return await _run_stitch_branch_mode(ctx, platform, settings, output_format)
 
-    return await _run_fix_mode(ctx, platform, settings, output_format, max_jobs)
+        return await _run_fix_mode(ctx, platform, settings, output_format, max_jobs)
+    except httpx.HTTPStatusError as exc:
+        print(
+            f"GitLab API error {exc.response.status_code}: {exc.request.url}\n"
+            f"{exc.response.text[:500]}",
+            file=sys.stderr,
+        )
+        return 1
 
 
 def _print_text_results(results: list[dict[str, object]]) -> None:

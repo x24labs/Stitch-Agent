@@ -197,8 +197,16 @@ class GitLabAdapter(CIPlatformAdapter):
         self, project_id: str, pipeline_id: str
     ) -> list[dict[str, str | int]]:
         resp = await self._client.get(
-            f"{self._pid(project_id)}/pipelines/{pipeline_id}/jobs?scope[]=failed",
+            f"{self._pid(project_id)}/pipelines/{pipeline_id}/jobs",
+            params={"scope[]": "failed"},
         )
+        if resp.status_code == 404:
+            body = resp.text[:300]
+            raise RuntimeError(
+                f"GitLab returned 404 for project={project_id} pipeline={pipeline_id}. "
+                f"Check that STITCH_GITLAB_TOKEN is set and has 'read_api' scope with "
+                f"access to this project. Response: {body}"
+            )
         resp.raise_for_status()
         return [
             {"id": str(j["id"]), "name": j.get("name", ""), "status": j.get("status", "failed")}
