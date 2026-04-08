@@ -34,6 +34,10 @@ logger = logging.getLogger("stitch_agent")
 
 _MAX_TOOL_ROUNDS = 15
 _WARN_ROUNDS_REMAINING = 3
+# Files larger than this get agentic mode even for lint/format errors.
+# Fast-path asks for the complete file in the response, which becomes a 100%
+# rewrite for large files and gets rejected by the patch validator.
+_FAST_FIX_MAX_LINES = 300
 _FAST_FIX_TYPES: frozenset[ErrorType] = frozenset({ErrorType.FORMAT, ErrorType.LINT})
 _MAX_LOG_LINES = 200
 
@@ -277,7 +281,21 @@ class Fixer:
                 " — do NOT include in output)\n" + "\n\n".join(parts)
             )
 
-        is_fast_fix = classification.error_type in _FAST_FIX_TYPES and not force_tools
+        max_file_lines = max(
+            (len(c.splitlines()) for c in file_contents.values()), default=0
+        )
+        file_too_large = max_file_lines > _FAST_FIX_MAX_LINES
+        if file_too_large and classification.error_type in _FAST_FIX_TYPES:
+            logger.info(
+                "fast-path skipped: largest file has %d lines (max %d), using agentic mode",
+                max_file_lines,
+                _FAST_FIX_MAX_LINES,
+            )
+        is_fast_fix = (
+            classification.error_type in _FAST_FIX_TYPES
+            and not force_tools
+            and not file_too_large
+        )
 
         if is_fast_fix:
             prompt += (
