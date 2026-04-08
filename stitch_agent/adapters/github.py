@@ -53,13 +53,19 @@ class GitHubAdapter(CIPlatformAdapter):
         if not job_id.lstrip("-").isdigit():
             job_id = await self._first_failed_job_id(run_id, request.project_id)
 
+        # GitHub redirects log downloads to a signed S3/Azure URL.
+        # Must NOT send auth headers to the external URL or S3 rejects with 403.
+        # Use follow_redirects=False here and fetch the target without auth.
         resp = await self._client.get(
             f"/repos/{owner}/{repo}/actions/jobs/{job_id}/logs",
             headers={"Accept": "text/plain"},
+            follow_redirects=False,
         )
-        if resp.status_code == 302:
-            redirect_resp = await self._client.get(resp.headers["Location"])
-            return redirect_resp.text
+        if resp.status_code in (301, 302, 307, 308):
+            async with httpx.AsyncClient(timeout=self._client.timeout) as plain:
+                log_resp = await plain.get(resp.headers["Location"])
+                log_resp.raise_for_status()
+                return log_resp.text
         resp.raise_for_status()
         return resp.text
 
@@ -225,6 +231,13 @@ class GitHubAdapter(CIPlatformAdapter):
             f"/repos/{owner}/{repo}/actions/runs/{pipeline_id}/jobs",
             params={"filter": "latest"},
         )
+        if resp.status_code == 404:
+            body = resp.text[:300]
+            raise RuntimeError(
+                f"GitHub returned 404 for {owner}/{repo} run={pipeline_id}. "
+                f"Check that STITCH_GITHUB_TOKEN is set and has 'repo' scope. "
+                f"Response: {body}"
+            )
         resp.raise_for_status()
         return [
             {"id": str(j["id"]), "name": j.get("name", ""), "status": j.get("conclusion", "")}
