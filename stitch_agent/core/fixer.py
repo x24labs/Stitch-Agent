@@ -374,8 +374,9 @@ class Fixer:
                             "Does it correctly resolve the CI error without introducing "
                             "new syntax errors or breaking changes? "
                             "If everything looks correct, respond with exactly 'LGTM'. "
-                            "If you spot an issue, produce a corrected version of the "
-                            "full JSON fix (same format as before)."
+                            "If you spot any issue, respond with the corrected JSON fix "
+                            "in exactly the same format as before — no explanation, "
+                            "just the raw JSON object starting with {."
                         ),
                     },
                 ]
@@ -390,8 +391,16 @@ class Fixer:
                     logger.info("fast-path self-review passed")
                     patch = _parse_response(raw)
                 else:
-                    logger.info("fast-path self-review produced correction")
-                    patch = _parse_response(review_raw)
+                    corrected = _parse_response(review_raw)
+                    if corrected.changes:
+                        logger.info("fast-path self-review produced correction")
+                        patch = corrected
+                    else:
+                        # Review didn't produce valid JSON — use original and log warning
+                        logger.warning(
+                            "fast-path self-review response was not valid JSON, using original fix"
+                        )
+                        patch = _parse_response(raw)
 
                 patch.usage += _extract_usage(response)
                 patch.usage += review_usage
@@ -570,6 +579,13 @@ def _parse_response(raw: str) -> FixPatch:
                 commit_message="fix: automated fix by stitch-agent",
                 explanation=f"Could not parse model response. Raw: {raw[:200]}",
             )
+
+    if not isinstance(data, dict):
+        return FixPatch(
+            changes=[],
+            commit_message="fix: automated fix by stitch-agent",
+            explanation=f"Model response parsed as {type(data).__name__}, expected dict. Raw: {raw[:200]}",
+        )
 
     files_dict = data.get("files", {})
     changes = [
