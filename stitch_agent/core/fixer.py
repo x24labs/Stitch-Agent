@@ -314,7 +314,6 @@ class Fixer:
         """Single-shot fix without tools (backward compatible)."""
         response = await client.chat.completions.create(
             model=model,
-            max_tokens=16_384,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -346,7 +345,6 @@ class Fixer:
         if skip_tools:
             response = await client.chat.completions.create(
                 model=model,
-                max_tokens=16_384,
                 messages=messages,
             )
             finish_reason = response.choices[0].finish_reason
@@ -378,7 +376,6 @@ class Fixer:
         for round_num in range(_MAX_TOOL_ROUNDS):
             response = await client.chat.completions.create(
                 model=model,
-                max_tokens=16_384,
                 messages=messages,
                 tools=_TOOLS,
             )
