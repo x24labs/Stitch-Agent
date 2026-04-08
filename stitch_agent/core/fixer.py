@@ -349,18 +349,30 @@ class Fixer:
                 max_tokens=16_384,
                 messages=messages,
             )
+            finish_reason = response.choices[0].finish_reason
             raw = response.choices[0].message.content or ""
-            if raw:
+
+            if finish_reason == "length":
+                # Response was truncated — JSON is incomplete and unparseable.
+                # Fall through to agentic mode with tools so the model reads/fixes
+                # files incrementally rather than outputting everything at once.
+                logger.warning(
+                    "fast-path response truncated (finish_reason=length), "
+                    "falling back to agentic mode"
+                )
+                # Continue below into the agentic loop (skip_tools is now ignored)
+            elif raw:
                 logger.info("fast-path fix for format/lint error (no tools needed)")
                 patch = _parse_response(raw)
                 patch.usage += _extract_usage(response)
                 return patch
-            return FixPatch(
-                changes=[],
-                commit_message="fix: automated fix by stitch-agent",
-                explanation="Fast-path fix produced no output",
-                usage=_extract_usage(response),
-            )
+            else:
+                return FixPatch(
+                    changes=[],
+                    commit_message="fix: automated fix by stitch-agent",
+                    explanation="Fast-path fix produced no output",
+                    usage=_extract_usage(response),
+                )
 
         cumulative_usage = UsageStats()
         for round_num in range(_MAX_TOOL_ROUNDS):
