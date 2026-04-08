@@ -12,6 +12,13 @@ import re
 
 from openai import AsyncOpenAI
 
+from stitch_agent.models import (
+    ClassificationResult,
+    ErrorType,
+    StitchConfig,
+    UsageStats,
+)
+
 
 def _normalize_path(path: str) -> str:
     """Strip absolute CI build prefixes so paths are relative to the repo root.
@@ -29,13 +36,6 @@ def _normalize_path(path: str) -> str:
     if m:
         return m.group(1)
     return path
-
-from stitch_agent.models import (
-    ClassificationResult,
-    ErrorType,
-    StitchConfig,
-    UsageStats,
-)
 
 logger = logging.getLogger("stitch_agent")
 
