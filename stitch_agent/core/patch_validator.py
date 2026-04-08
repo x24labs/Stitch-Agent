@@ -26,6 +26,13 @@ _RELAXED_TYPES: frozenset[ErrorType] = frozenset({
     ErrorType.UNKNOWN,
 })
 
+# Error types where formatting tools legitimately rewrite large portions of files.
+# Relaxes diff_ratio/max_lines_changed but keeps export/signature/import checks.
+_SIZE_RELAXED_TYPES: frozenset[ErrorType] = frozenset({
+    ErrorType.LINT,
+    ErrorType.FORMAT,
+})
+
 _LANG_MAP: dict[str, str] = {
     ".py": "python",
     ".ts": "typescript",
@@ -99,6 +106,7 @@ class PatchValidator:
             return ValidationResult(passed=True)
 
         relaxed = error_type is not None and error_type in _RELAXED_TYPES
+        size_relaxed = relaxed or (error_type is not None and error_type in _SIZE_RELAXED_TYPES)
         violations: list[PatchViolation] = []
 
         # Global: file count check
@@ -143,14 +151,14 @@ class PatchValidator:
 
             if original is not None:
                 violations.extend(
-                    self._check_file(change, original, relaxed=relaxed)
+                    self._check_file(change, original, relaxed=relaxed, size_relaxed=size_relaxed)
                 )
 
         passed = not any(v.severity == "error" for v in violations)
         return ValidationResult(passed=passed, violations=violations)
 
     def _check_file(
-        self, change: FileChange, original: str, *, relaxed: bool = False,
+        self, change: FileChange, original: str, *, relaxed: bool = False, size_relaxed: bool = False,
     ) -> list[PatchViolation]:
         violations: list[PatchViolation] = []
         lang = _detect_lang(change.path)
@@ -161,7 +169,7 @@ class PatchValidator:
         ratio = difflib.SequenceMatcher(None, orig_lines, new_lines).ratio()
         diff_ratio = 1.0 - ratio
 
-        max_ratio = 0.60 if relaxed else self.config.max_diff_ratio
+        max_ratio = 0.60 if (relaxed or size_relaxed) else self.config.max_diff_ratio
         if diff_ratio > max_ratio:
             violations.append(
                 PatchViolation(
@@ -183,7 +191,7 @@ class PatchValidator:
             1 for line in diff_lines if line.startswith(("+", "-"))
             and not line.startswith(("+++", "---"))
         )
-        max_lines = self.config.max_lines_changed * 2 if relaxed else self.config.max_lines_changed
+        max_lines = self.config.max_lines_changed * 2 if (relaxed or size_relaxed) else self.config.max_lines_changed
         if changed_lines > max_lines:
             violations.append(
                 PatchViolation(
