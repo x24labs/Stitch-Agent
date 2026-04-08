@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("stitch_agent")
 
 _MAX_TOOL_ROUNDS = 15
+_WARN_ROUNDS_REMAINING = 3
 _FAST_FIX_TYPES: frozenset[ErrorType] = frozenset({ErrorType.FORMAT, ErrorType.LINT})
 _MAX_LOG_LINES = 200
 
@@ -361,8 +362,38 @@ class Fixer:
                 # Continue below into the agentic loop (skip_tools is now ignored)
             elif raw:
                 logger.info("fast-path fix for format/lint error (no tools needed)")
-                patch = _parse_response(raw)
-                patch.usage += _extract_usage(response)
+                # Self-review: ask the model to verify its own output in a second
+                # pass before we accept it. Catches obvious mistakes (e.g. wrong
+                # comment syntax, broken JSX) that would cause a new CI failure.
+                review_messages = messages + [
+                    {"role": "assistant", "content": raw},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Review the fix you just produced. "
+                            "Does it correctly resolve the CI error without introducing "
+                            "new syntax errors or breaking changes? "
+                            "If everything looks correct, respond with exactly 'LGTM'. "
+                            "If you spot an issue, produce a corrected version of the "
+                            "full JSON fix (same format as before)."
+                        ),
+                    },
+                ]
+                review_resp = await client.chat.completions.create(
+                    model=model,
+                    messages=review_messages,
+                )
+                review_raw = (review_resp.choices[0].message.content or "").strip()
+                review_usage = _extract_usage(review_resp)
+
+                if review_raw.upper().startswith("LGTM"):
+                    logger.info("fast-path self-review passed")
+                    patch = _parse_response(raw)
+                else:
+                    logger.info("fast-path self-review produced correction")
+                    patch = _parse_response(review_raw)
+
+                patch.usage += _extract_usage(response) + review_usage
                 return patch
             else:
                 return FixPatch(
@@ -374,6 +405,18 @@ class Fixer:
 
         cumulative_usage = UsageStats()
         for round_num in range(_MAX_TOOL_ROUNDS):
+            remaining = _MAX_TOOL_ROUNDS - round_num - 1
+
+            # Countdown warning: nudge the model to stop exploring and produce the fix
+            if remaining == _WARN_ROUNDS_REMAINING:
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"You have {remaining} rounds remaining. "
+                        "Stop reading files and produce the fix JSON now."
+                    ),
+                })
+
             response = await client.chat.completions.create(
                 model=model,
                 messages=messages,
@@ -422,6 +465,34 @@ class Fixer:
                 })
 
         logger.warning("agentic fix exhausted %d tool rounds", _MAX_TOOL_ROUNDS)
+
+        # Salvage call: the model has explored the codebase for N rounds and has
+        # all the context it needs. One final call without tools forces it to
+        # produce the JSON fix instead of continuing to explore.
+        logger.info("attempting salvage call (no tools) with accumulated context")
+        salvage_messages = messages + [{
+            "role": "user",
+            "content": (
+                "You have no more tool rounds. Based on everything you have read, "
+                "produce the fix JSON now. No tool calls — just the JSON."
+            ),
+        }]
+        try:
+            salvage_resp = await client.chat.completions.create(
+                model=model,
+                messages=salvage_messages,
+            )
+            cumulative_usage += _extract_usage(salvage_resp)
+            salvage_raw = salvage_resp.choices[0].message.content or ""
+            if salvage_raw:
+                salvage_patch = _parse_response(salvage_raw)
+                if salvage_patch.changes:
+                    logger.info("salvage call produced %d file changes", len(salvage_patch.changes))
+                    salvage_patch.usage += cumulative_usage
+                    return salvage_patch
+        except Exception as exc:
+            logger.warning("salvage call failed: %s", exc)
+
         return FixPatch(
             changes=[],
             commit_message="fix: automated fix by stitch-agent",
