@@ -393,7 +393,8 @@ class Fixer:
                     logger.info("fast-path self-review produced correction")
                     patch = _parse_response(review_raw)
 
-                patch.usage += _extract_usage(response) + review_usage
+                patch.usage += _extract_usage(response)
+                patch.usage += review_usage
                 return patch
             else:
                 return FixPatch(
