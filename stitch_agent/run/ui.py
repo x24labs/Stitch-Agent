@@ -107,6 +107,21 @@ class RunUI:
             self._active_log = ""
         self._refresh()
 
+    def driver_started(self, name: str, driver_name: str) -> None:
+        self._active_job = name
+        self._active_log = ""
+        self._driver_name = driver_name
+        for j in self.jobs:
+            if j.name == name:
+                j.status = "fixing"
+                break
+        self._refresh()
+
+    def driver_log_update(self, name: str, log: str) -> None:
+        if name == self._active_job:
+            self._active_log = log
+            self._refresh()
+
     def watch_cycle(self, cycle: int) -> None:
         self._watch_cycle = cycle
         for j in self.jobs:
@@ -180,7 +195,7 @@ class RunUI:
 
         for j in self.jobs:
             icon_text = _status_icon(j.status)
-            name_text = Text(j.name, style="bold" if j.status == "running" else "")
+            name_text = Text(j.name, style="bold" if j.status in ("running", "fixing") else "")
             info_text = self._job_info(j)
             table.add_row(icon_text, name_text, info_text)
 
@@ -188,7 +203,17 @@ class RunUI:
 
     def _job_info(self, j: _JobState) -> Text:
         info = Text()
-        if j.status == "running":
+        if j.status == "fixing":
+            elapsed = time.monotonic() - (j.start_time or time.monotonic())
+            driver = getattr(self, "_driver_name", "agent")
+            info.append(f"fixing with {driver}", style="magenta bold")
+            info.append(f" {elapsed:.1f}s", style="dim")
+            if self._active_max_attempts > 1:
+                info.append(
+                    f" (attempt {self._active_attempt}/{self._active_max_attempts})",
+                    style="dim",
+                )
+        elif j.status == "running":
             elapsed = time.monotonic() - (j.start_time or time.monotonic())
             info.append("running", style="yellow")
             info.append(f" {elapsed:.1f}s", style="dim")
@@ -235,11 +260,22 @@ class RunUI:
             else:
                 log_text.append(f"  {line}\n", style="dim")
 
-        title = Text(self._active_job or "", style="bold")
+        job_name = self._active_job or ""
+        is_fixing = any(j.name == job_name and j.status == "fixing" for j in self.jobs)
+        if is_fixing:
+            driver = getattr(self, "_driver_name", "agent")
+            title = Text.assemble(
+                (f"{job_name} ", "bold"),
+                (f"fixing with {driver}", "magenta"),
+            )
+            border = "magenta"
+        else:
+            title = Text(job_name, style="bold")
+            border = "yellow"
         return Panel(
             log_text,
             title=title,
-            border_style="yellow",
+            border_style=border,
             padding=(0, 1),
         )
 
@@ -253,6 +289,7 @@ def _status_icon(status: str) -> Text:
         "not_run": ("\u2796", "dim"),
         "failed": ("\u274c", "bold red"),
         "running": ("\u25b6", "bold yellow"),
+        "fixing": ("\U0001f9e0", "bold magenta"),
         "pending": ("\u23f8", "dim"),
     }
     char, style = icons.get(status, ("?", ""))

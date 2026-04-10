@@ -19,6 +19,18 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+def _make_proc(returncode: int, output: bytes) -> MagicMock:
+    """Create a mock subprocess with readline-compatible stdout."""
+    proc = MagicMock()
+    proc.returncode = returncode
+    lines = output.split(b"\n")
+    # readline returns each line with newline, then b"" to signal EOF
+    line_iter = iter([line + b"\n" for line in lines if line] + [b""])
+    proc.stdout.readline = AsyncMock(side_effect=lambda: next(line_iter))
+    proc.wait = AsyncMock(return_value=returncode)
+    return proc
+
+
 def _ctx(tmp_path: Path) -> FixContext:
     return FixContext(
         repo_root=tmp_path,
@@ -58,9 +70,7 @@ async def test_claude_driver_success(
         lambda _name: "/usr/bin/claude",
     )
 
-    proc = MagicMock()
-    proc.returncode = 0
-    proc.communicate = AsyncMock(return_value=(b"all good\n", b""))
+    proc = _make_proc(0, b"all good\n")
 
     async def fake_exec(*_args: Any, **_kwargs: Any) -> Any:
         return proc
@@ -83,9 +93,7 @@ async def test_claude_driver_nonzero_exit(
         "stitch_agent.run.drivers.claude_code.shutil.which",
         lambda _name: "/usr/bin/claude",
     )
-    proc = MagicMock()
-    proc.returncode = 2
-    proc.communicate = AsyncMock(return_value=(b"boom\n", b""))
+    proc = _make_proc(2, b"boom\n")
 
     async def fake_exec(*_args: Any, **_kwargs: Any) -> Any:
         return proc
@@ -111,11 +119,11 @@ async def test_claude_driver_timeout(
     proc = MagicMock()
     proc.returncode = None
 
-    async def hang() -> Any:
+    async def hang_readline() -> bytes:
         await asyncio.sleep(10)
-        return (b"", b"")
+        return b""
 
-    proc.communicate = hang
+    proc.stdout.readline = hang_readline
     proc.kill = MagicMock()
     proc.wait = AsyncMock(return_value=None)
 

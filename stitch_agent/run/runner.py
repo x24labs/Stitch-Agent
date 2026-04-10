@@ -27,6 +27,8 @@ class RunnerCallback(Protocol):
     def job_started(self, name: str, attempt: int, max_attempts: int) -> None: ...
     def job_log_update(self, name: str, log: str) -> None: ...
     def job_finished(self, name: str, result: JobResult) -> None: ...
+    def driver_started(self, name: str, driver_name: str) -> None: ...
+    def driver_log_update(self, name: str, log: str) -> None: ...
 
 
 class _NullCallback:
@@ -37,6 +39,12 @@ class _NullCallback:
         pass
 
     def job_finished(self, name: str, result: JobResult) -> None:
+        pass
+
+    def driver_started(self, name: str, driver_name: str) -> None:
+        pass
+
+    def driver_log_update(self, name: str, log: str) -> None:
         pass
 
 
@@ -157,7 +165,19 @@ class Runner:
                 error_log=exec_result.log,
                 attempt=attempt,
             )
+
+            self._cb.driver_started(job.name, self.driver.name)
+
+            # Wire streaming output if the driver supports it
+            if hasattr(self.driver, "on_output"):
+                self.driver.on_output = lambda log, _name=job.name: (
+                    self._cb.driver_log_update(_name, log)
+                )
+
             outcome = await self.driver.fix(context)
+
+            if hasattr(self.driver, "on_output"):
+                self.driver.on_output = None
 
             if not outcome.applied:
                 reason = outcome.reason or "driver did not apply a fix"

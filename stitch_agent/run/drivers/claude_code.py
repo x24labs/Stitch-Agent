@@ -1,19 +1,22 @@
-"""ClaudeCodeDriver — delegate fixes to the Claude Code CLI.
+"""ClaudeCodeDriver -- delegate fixes to the Claude Code CLI.
 
-The Claude Code CLI is assumed to be installed as `claude` in PATH. We invoke
-it in non-interactive mode with `claude -p <prompt>` and let it edit files
-directly in the repo. The runner then re-runs the failing job and uses that as
-the ground truth for whether the fix worked.
+Streams stdout line-by-line so the TUI can show what Claude is doing in
+real time. Uses --permission-mode acceptEdits so Claude can edit files
+without interactive approval.
 """
 
 from __future__ import annotations
 
 import asyncio
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from stitch_agent.run.drivers.base import build_prompt
 from stitch_agent.run.models import FixContext, FixOutcome
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @dataclass
@@ -21,6 +24,7 @@ class ClaudeCodeDriver:
     name: str = "claude"
     timeout_seconds: float = 600.0
     binary: str = "claude"
+    on_output: Callable[[str], None] | None = field(default=None, repr=False)
 
     async def fix(self, context: FixContext) -> FixOutcome:
         if not shutil.which(self.binary):
@@ -52,21 +56,34 @@ class ClaudeCodeDriver:
                 reason=f"failed to spawn {self.binary}: {exc}",
             )
 
+        return await self._stream_output(proc)
+
+    async def _stream_output(self, proc: asyncio.subprocess.Process) -> FixOutcome:
+        lines: list[str] = []
+        assert proc.stdout is not None
+
+        async def read_lines() -> None:
+            while True:
+                raw = await proc.stdout.readline()  # type: ignore[union-attr]
+                if not raw:
+                    break
+                line = raw.decode("utf-8", errors="replace")
+                lines.append(line)
+                if self.on_output:
+                    self.on_output("".join(lines))
+
         try:
-            out_bytes, _ = await asyncio.wait_for(
-                proc.communicate(), timeout=self.timeout_seconds,
-            )
+            await asyncio.wait_for(read_lines(), timeout=self.timeout_seconds)
+            await proc.wait()
         except TimeoutError:
-            with _suppress():
-                proc.kill()
-            with _suppress():
-                await proc.wait()
+            _kill(proc)
             return FixOutcome(
                 applied=False,
                 reason=f"{self.binary} CLI timeout after {self.timeout_seconds}s",
+                driver_log="".join(lines)[-2000:],
             )
 
-        log = (out_bytes or b"").decode("utf-8", errors="replace")
+        log = "".join(lines)
         log_tail = log[-2000:]
 
         if proc.returncode != 0:
@@ -83,9 +100,8 @@ class ClaudeCodeDriver:
         )
 
 
-class _suppress:
-    def __enter__(self) -> None:
-        return None
+def _kill(proc: asyncio.subprocess.Process) -> None:
+    import contextlib
 
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        return True
+    with contextlib.suppress(ProcessLookupError):
+        proc.kill()
