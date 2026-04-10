@@ -9,6 +9,7 @@ Renders a live-updating display with:
 
 from __future__ import annotations
 
+import contextlib
 import time
 from typing import TYPE_CHECKING
 
@@ -20,16 +21,6 @@ from rich.text import Text
 
 if TYPE_CHECKING:
     from stitch_agent.run.models import CIJob, JobResult, RunReport
-
-_STATUS_ICONS = {
-    "passed": "[bold green]\u2705[/]",
-    "escalated": "[bold red]\u274c[/]",
-    "skipped": "[dim]\u23ed\ufe0f [/]",
-    "not_run": "[dim]\u2796[/]",
-    "failed": "[bold red]\u274c[/]",
-    "running": "[bold yellow]\u25b6[/]",
-    "pending": "[dim]\u23f8[/]",
-}
 
 _LOG_TAIL_LINES = 12
 
@@ -78,8 +69,10 @@ class RunUI:
 
     def stop(self) -> None:
         if self._live:
-            self._live.update(self._render())
-            self._live.stop()
+            with contextlib.suppress(Exception):
+                self._live.update(self._render())
+            with contextlib.suppress(Exception):
+                self._live.stop()
             self._live = None
 
     def job_started(self, name: str, attempt: int, max_attempts: int) -> None:
@@ -125,7 +118,8 @@ class RunUI:
 
     def _refresh(self) -> None:
         if self._live:
-            self._live.update(self._render())
+            with contextlib.suppress(Exception):
+                self._live.update(self._render())
 
     def _render(self) -> Panel:
         elapsed = time.monotonic() - self._start_time if self._start_time else 0
@@ -138,9 +132,13 @@ class RunUI:
             parts.append(Text())
             parts.append(log_panel)
 
+        title = Text.assemble(
+            ("stitch run ", "bold"),
+            (f"[{self.agent}]", "cyan"),
+        )
         return Panel(
             Group(*parts),
-            title=f"[bold]stitch run[/] [cyan]\\[{self.agent}][/]",
+            title=title,
             border_style="blue",
             padding=(1, 2),
         )
@@ -154,7 +152,7 @@ class RunUI:
         line = Text()
         line.append("repo ", style="dim")
         line.append(self.repo, style="bold")
-        line.append("  ", style="dim")
+        line.append("  ")
         line.append(f"{runnable} jobs", style="cyan")
         if skipped:
             line.append(f", {skipped} skipped", style="dim")
@@ -162,7 +160,7 @@ class RunUI:
             line.append(f", {passed} passed", style="green")
         if failed:
             line.append(f", {failed} failed", style="red")
-        line.append(f"  [{elapsed:.1f}s]", style="dim")
+        line.append(f"  {elapsed:.1f}s", style="dim")
         if self._watch_cycle > 0:
             line.append(f"  cycle #{self._watch_cycle}", style="dim italic")
         return line
@@ -175,43 +173,48 @@ class RunUI:
             box=None,
             padding=(0, 1),
         )
-        table.add_column("icon", width=3, no_wrap=True)
+        table.add_column("icon", width=4, no_wrap=True)
         table.add_column("name", min_width=20, no_wrap=True)
         table.add_column("info", no_wrap=True)
 
         for j in self.jobs:
-            icon = _STATUS_ICONS.get(j.status, "?")
-            name_style = "bold" if j.status == "running" else ""
-
-            info_parts: list[str] = []
-            if j.status == "running":
-                elapsed = time.monotonic() - (j.start_time or time.monotonic())
-                info_parts.append(f"[yellow]running[/] [{elapsed:.1f}s]")
-                if self._active_max_attempts > 1:
-                    info_parts.append(
-                        f"[dim](attempt {self._active_attempt}/{self._active_max_attempts})[/]"
-                    )
-            elif j.status == "passed":
-                dur = f"{j.duration:.1f}s" if j.duration else ""
-                info_parts.append(f"[green]{dur}[/]")
-                if j.attempts and j.attempts > 1:
-                    info_parts.append(f"[dim]({j.attempts} attempts)[/]")
-            elif j.status == "escalated":
-                dur = f"{j.duration:.1f}s" if j.duration else ""
-                info_parts.append(f"[red]failed[/] {dur}")
-                if j.attempts:
-                    info_parts.append(f"[dim]({j.attempts} attempts)[/]")
-            elif j.status == "skipped":
-                reason = j.skip_reason or "skipped"
-                info_parts.append(f"[dim]{reason}[/]")
-            elif j.status == "pending":
-                info_parts.append("[dim]pending[/]")
-            elif j.status == "not_run":
-                info_parts.append("[dim]not run[/]")
-
-            table.add_row(icon, f"[{name_style}]{j.name}[/]", " ".join(info_parts))
+            icon_text = _status_icon(j.status)
+            name_text = Text(j.name, style="bold" if j.status == "running" else "")
+            info_text = self._job_info(j)
+            table.add_row(icon_text, name_text, info_text)
 
         return table
+
+    def _job_info(self, j: _JobState) -> Text:
+        info = Text()
+        if j.status == "running":
+            elapsed = time.monotonic() - (j.start_time or time.monotonic())
+            info.append("running", style="yellow")
+            info.append(f" {elapsed:.1f}s", style="dim")
+            if self._active_max_attempts > 1:
+                info.append(
+                    f" (attempt {self._active_attempt}/{self._active_max_attempts})",
+                    style="dim",
+                )
+        elif j.status == "passed":
+            dur = f"{j.duration:.1f}s" if j.duration else ""
+            info.append(dur, style="green")
+            if j.attempts and j.attempts > 1:
+                info.append(f" ({j.attempts} attempts)", style="dim")
+        elif j.status == "escalated":
+            dur = f"{j.duration:.1f}s" if j.duration else ""
+            info.append("failed", style="red")
+            if dur:
+                info.append(f" {dur}", style="dim")
+            if j.attempts:
+                info.append(f" ({j.attempts} attempts)", style="dim")
+        elif j.status == "skipped":
+            info.append(j.skip_reason or "skipped", style="dim")
+        elif j.status == "pending":
+            info.append("pending", style="dim")
+        elif j.status == "not_run":
+            info.append("not run", style="dim")
+        return info
 
     def _render_log_panel(self) -> Panel:
         lines = self._active_log.strip().splitlines()
@@ -220,7 +223,9 @@ class RunUI:
 
         log_text = Text()
         if truncated:
-            log_text.append(f"  ... ({len(lines) - _LOG_TAIL_LINES} lines above)\n", style="dim")
+            log_text.append(
+                f"  ... ({len(lines) - _LOG_TAIL_LINES} lines above)\n", style="dim"
+            )
         for line in tail:
             if _is_error_line(line):
                 log_text.append(f"  {line}\n", style="red")
@@ -229,12 +234,28 @@ class RunUI:
             else:
                 log_text.append(f"  {line}\n", style="dim")
 
+        title = Text(self._active_job or "", style="bold")
         return Panel(
             log_text,
-            title=f"[bold]{self._active_job}[/]",
+            title=title,
             border_style="yellow",
             padding=(0, 1),
         )
+
+
+def _status_icon(status: str) -> Text:
+    """Return a Text object for the status icon (avoids markup parsing issues)."""
+    icons = {
+        "passed": ("\u2705", "bold green"),
+        "escalated": ("\u274c", "bold red"),
+        "skipped": ("\u23ed\ufe0f ", "dim"),
+        "not_run": ("\u2796", "dim"),
+        "failed": ("\u274c", "bold red"),
+        "running": ("\u25b6", "bold yellow"),
+        "pending": ("\u23f8", "dim"),
+    }
+    char, style = icons.get(status, ("?", ""))
+    return Text(char, style=style)
 
 
 class _JobState:
@@ -265,7 +286,7 @@ def _is_error_line(line: str) -> bool:
 
 def _is_success_line(line: str) -> bool:
     lower = line.lower()
-    return any(kw in lower for kw in ("pass", "ok", "success", "✓"))
+    return any(kw in lower for kw in ("pass", "ok", "success", "\u2713"))
 
 
 def print_summary(console: Console, report: RunReport) -> None:
@@ -275,15 +296,19 @@ def print_summary(console: Console, report: RunReport) -> None:
     skipped = sum(1 for j in report.jobs if j.status == "skipped")
 
     if report.overall_status == "passed":
-        console.print(
-            f"\n[bold green]\u2705 All {passed} jobs passed[/]"
-            + (f" [dim]({skipped} skipped)[/]" if skipped else "")
-        )
+        msg = Text()
+        msg.append(f"\n\u2705 All {passed} jobs passed", style="bold green")
+        if skipped:
+            msg.append(f" ({skipped} skipped)", style="dim")
+        console.print(msg)
     else:
-        console.print(f"\n[bold red]\u274c {failed} failed[/], {passed} passed")
+        msg = Text()
+        msg.append(f"\n\u274c {failed} failed", style="bold red")
+        msg.append(f", {passed} passed")
+        console.print(msg)
         for j in report.jobs:
             if j.status in ("escalated", "failed") and j.error_log:
-                console.print(f"\n[bold red]{j.name}[/]:")
+                console.print(Text(f"\n{j.name}:", style="bold red"))
                 tail = j.error_log.strip().splitlines()[-6:]
                 for line in tail:
-                    console.print(f"  [dim]{line}[/]")
+                    console.print(Text(f"  {line}", style="dim"))

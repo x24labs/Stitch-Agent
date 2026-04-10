@@ -124,11 +124,14 @@ async def run_run_command(args: argparse.Namespace) -> int:
     ui.start()
     try:
         report = await runner.run(jobs, dry_run=False)
-    finally:
+    except KeyboardInterrupt:
         ui.stop()
-
-    print_summary(console, report)
-    return report.exit_code()
+        console.print("\n[dim]interrupted[/]")
+        return 130
+    else:
+        ui.stop()
+        print_summary(console, report)
+        return report.exit_code()
 
 
 def _runnable_names(jobs: list[CIJob]) -> list[str]:
