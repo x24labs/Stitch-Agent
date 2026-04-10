@@ -62,8 +62,9 @@ class RunUI:
         self._live = Live(
             self._render(),
             console=self.console,
-            refresh_per_second=8,
+            refresh_per_second=4,
             transient=False,
+            get_renderable=self._render,
         )
         self._live.start()
 
@@ -133,7 +134,7 @@ class RunUI:
             parts.append(log_panel)
 
         title = Text.assemble(
-            ("stitch run ", "bold"),
+            ("Stitch run ", "bold"),
             (f"[{self.agent}]", "cyan"),
         )
         return Panel(
