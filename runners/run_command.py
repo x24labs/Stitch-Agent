@@ -17,7 +17,7 @@ from stitch_agent.run.drivers import (
     ClaudeCodeDriver,
     CodexDriver,
 )
-from stitch_agent.run.filter import apply_filter, load_filter_config
+from stitch_agent.run.filter import FilterConfig, apply_filter
 from stitch_agent.run.runner import Runner, RunnerConfig
 from stitch_agent.run.ui import RunUI, print_summary
 from stitch_agent.run.watcher import (
@@ -78,7 +78,7 @@ async def run_run_command(args: argparse.Namespace) -> int:
             print(msg)
         return 0
 
-    filter_cfg = load_filter_config(repo_root)
+    filter_cfg = FilterConfig()
     if args.jobs:
         filter_cfg.only = [j.strip() for j in args.jobs.split(",") if j.strip()]
 

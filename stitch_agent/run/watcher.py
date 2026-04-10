@@ -73,7 +73,6 @@ IGNORE_FILES: frozenset[str] = frozenset(
 KEEP_HIDDEN: frozenset[str] = frozenset(
     {
         ".gitlab-ci.yml",
-        ".stitch.yml",
         ".github",
         ".gitignore",
     }
