@@ -335,10 +335,6 @@ def _merge_config(existing: StitchConfig, profile: DetectedProfile) -> StitchCon
         test_runner=existing.test_runner or profile.test_runner,
         package_manager=existing.package_manager or profile.package_manager,
         conventions=existing.conventions,
-        auto_fix=existing.auto_fix,
-        escalate=existing.escalate,
-        notify=existing.notify,
-        max_attempts=existing.max_attempts,
     )
 
 
@@ -355,17 +351,6 @@ def _render_config(config: StitchConfig) -> str:
         payload["package_manager"] = config.package_manager
     if config.conventions:
         payload["conventions"] = config.conventions
-
-    payload["auto_fix"] = config.auto_fix
-    payload["escalate"] = config.escalate
-    payload["max_attempts"] = config.max_attempts
-
-    notify_payload = config.notify.model_dump(exclude_none=True, exclude_defaults=True)
-    channels = notify_payload.get("channels")
-    if channels == []:
-        notify_payload.pop("channels")
-    if notify_payload:
-        payload["notify"] = notify_payload
 
     rendered = yaml.safe_dump(payload, sort_keys=False)
     if not rendered.endswith("\n"):

@@ -31,8 +31,6 @@ async def run_doctor_checks(
 
     provider_check = _check_provider_token(platform, settings)
     checks.append(provider_check)
-    checks.append(_check_validation_runtime(settings))
-
     if provider_check.status == "pass":
         checks.append(await _check_provider_connectivity(platform, settings))
     else:

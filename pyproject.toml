@@ -1,14 +1,14 @@
 [project]
 name = "stitch-agent"
-version = "0.8.12"
-description = "The AI that stitches your CI back together"
+version = "1.0.0"
+description = "Skill-first local CI runner -- run your CI jobs locally and fix failures with AI"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12"
 authors = [{ name = "stitch contributors" }]
-keywords = ["ci", "ai", "gitlab", "github", "automation", "devops"]
+keywords = ["ci", "local-ci", "ai", "claude-code", "devex", "lint", "test", "automation"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.12",

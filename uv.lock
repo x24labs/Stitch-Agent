@@ -973,7 +973,7 @@ wheels = [
 
 [[package]]
 name = "stitch-agent"
-version = "0.6.4"
+version = "0.8.11"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },

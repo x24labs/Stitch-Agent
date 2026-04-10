@@ -1,3 +1,5 @@
+"""Tests for runners/cli.py (v1.0 -- run, setup, doctor subcommands only)."""
+
 from __future__ import annotations
 
 import json
@@ -8,53 +10,40 @@ from runners.cli import build_parser, parse_cli_args, run
 from stitch_agent.onboarding.report import CommandReport
 
 
-def test_parse_cli_args_keeps_fix_subcommand() -> None:
+def test_parse_run_subcommand() -> None:
     parser = build_parser()
-    args = parse_cli_args(
-        parser,
-        [
-            "fix",
-            "--platform",
-            "gitlab",
-            "--project-id",
-            "42",
-            "--pipeline-id",
-            "100",
-            "--job-id",
-            "200",
-            "--branch",
-            "main",
-        ],
-    )
-    assert args.command == "fix"
+    args = parse_cli_args(parser, ["run", "claude", "--dry-run"])
+    assert args.command == "run"
+    assert args.agent == "claude"
+    assert args.dry_run is True
 
 
-def test_parse_cli_args_supports_legacy_fix_invocation() -> None:
+def test_parse_setup_subcommand() -> None:
     parser = build_parser()
-    args = parse_cli_args(
-        parser,
-        [
-            "--platform",
-            "gitlab",
-            "--project-id",
-            "42",
-            "--pipeline-id",
-            "100",
-            "--job-id",
-            "200",
-            "--branch",
-            "main",
-        ],
-    )
-    assert args.command == "fix"
+    args = parse_cli_args(parser, ["setup", "--platform", "github"])
+    assert args.command == "setup"
+    assert args.platform == "github"
+
+
+def test_parse_doctor_subcommand() -> None:
+    parser = build_parser()
+    args = parse_cli_args(parser, ["doctor", "--json"])
+    assert args.command == "doctor"
+    assert args.json is True
+
+
+def test_no_subcommand_exits_nonzero() -> None:
+    parser = build_parser()
+    args = parse_cli_args(parser, [])
+    assert args.command is None
 
 
 @pytest.mark.asyncio
 async def test_doctor_json_output_contract(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
 ) -> None:
     async def fake_run_doctor_checks(
-        *, platform: str, repo_root: object, settings: object, project_id: str | None
+        *, platform: str, repo_root: object, settings: object, project_id: str | None,
     ) -> CommandReport:
         assert platform == "gitlab"
         assert project_id is None

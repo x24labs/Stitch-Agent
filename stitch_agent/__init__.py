@@ -1,22 +1,20 @@
-from stitch_agent.core.agent import StitchAgent
-from stitch_agent.history import HistoryStore
-from stitch_agent.models import (
-    ClassificationResult,
-    ErrorType,
-    FixRequest,
-    FixResult,
-    StitchConfig,
+"""stitch-agent -- skill-first local CI runner."""
+
+from stitch_agent.run import (
+    CIJob,
+    FixContext,
+    FixOutcome,
+    JobResult,
+    RunReport,
 )
 
-__version__ = "0.2.1"
+__version__ = "1.0.0"
 
 __all__ = [
-    "StitchAgent",
-    "HistoryStore",
-    "ErrorType",
-    "FixRequest",
-    "ClassificationResult",
-    "FixResult",
-    "StitchConfig",
+    "CIJob",
+    "FixContext",
+    "FixOutcome",
+    "JobResult",
+    "RunReport",
     "__version__",
 ]

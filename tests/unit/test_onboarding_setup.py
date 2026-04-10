@@ -35,7 +35,6 @@ testpaths = ["tests"]
     assert payload["linter"] == "ruff"
     assert payload["test_runner"] == "pytest"
     assert payload["package_manager"] == "pip"
-    assert payload["max_attempts"] == 3
 
 
 def test_setup_is_idempotent_when_config_is_current(tmp_path: Path) -> None:
