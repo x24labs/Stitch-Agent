@@ -35,6 +35,8 @@ class ClaudeCodeDriver:
                 self.binary,
                 "-p",
                 prompt,
+                "--permission-mode",
+                "acceptEdits",
                 cwd=str(context.repo_root),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
