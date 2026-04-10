@@ -13,7 +13,7 @@ import contextlib
 import time
 from typing import TYPE_CHECKING
 
-from rich.console import Console, Group
+from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
@@ -126,7 +126,7 @@ class RunUI:
         elapsed = time.monotonic() - self._start_time if self._start_time else 0
         header = self._render_header(elapsed)
         table = self._render_table()
-        parts: list[object] = [header, Text(), table]
+        parts: list[RenderableType] = [header, Text(), table]
 
         if self._active_job and self._active_log:
             log_panel = self._render_log_panel()
