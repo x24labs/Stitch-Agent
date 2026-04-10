@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from rich.console import Console
+
 from stitch_agent.run.ci_parser import CIParseError, parse_ci_config
 from stitch_agent.run.drivers import (
     AgentDriver,
@@ -17,6 +19,7 @@ from stitch_agent.run.drivers import (
 )
 from stitch_agent.run.filter import apply_filter, load_filter_config
 from stitch_agent.run.runner import Runner, RunnerConfig
+from stitch_agent.run.ui import RunUI, print_summary
 from stitch_agent.run.watcher import (
     LockAcquireError,
     StitchLock,
@@ -27,17 +30,9 @@ from stitch_agent.run.watcher import (
 if TYPE_CHECKING:
     import argparse
 
-    from stitch_agent.run.models import CIJob, JobResult, RunReport
+    from stitch_agent.run.models import CIJob
 
 _VALID_AGENTS = ("claude", "codex")
-
-_STATUS_ICONS = {
-    "passed": "\u2705",
-    "escalated": "\u274c",
-    "skipped": "\u23ed\ufe0f",
-    "not_run": "\u2796",
-    "failed": "\u274c",
-}
 
 
 def _build_driver(agent: str) -> AgentDriver | None:
@@ -49,34 +44,18 @@ def _build_driver(agent: str) -> AgentDriver | None:
 
 
 def _print_dry_run(jobs: list[CIJob]) -> None:
+    console = Console()
     runnable = [j for j in jobs if not j.skip_reason]
     skipped = [j for j in jobs if j.skip_reason]
-    print(f"stitch run: dry-run — {len(runnable)} runnable, {len(skipped)} skipped")
+    console.print(
+        f"[bold]stitch run[/]: dry-run "
+        f"[cyan]{len(runnable)} runnable[/], [dim]{len(skipped)} skipped[/]"
+    )
     for j in runnable:
-        cmd = " && ".join(j.script)[:100]
-        print(f"  \u2022 [{j.stage}] {j.name}: {cmd}")
+        cmd = " && ".join(j.script)[:80]
+        console.print(f"  [green]\u25b6[/] [dim]\\[{j.stage}][/] [bold]{j.name}[/]: {cmd}")
     for j in skipped:
-        print(f"  \u23ed\ufe0f  [{j.stage}] {j.name} — {j.skip_reason}")
-
-
-def _print_report(report: RunReport) -> None:
-    print(f"stitch run [{report.agent}]: {report.overall_status}")
-    for j in report.jobs:
-        _print_job_result(j)
-
-
-def _print_job_result(j: JobResult) -> None:
-    icon = _STATUS_ICONS.get(j.status, "?")
-    tail = ""
-    if j.attempts:
-        tail = f" ({j.attempts} attempt{'s' if j.attempts > 1 else ''})"
-    print(f"  {icon} {j.name}{tail}")
-    if j.status == "skipped" and j.skip_reason:
-        print(f"       reason: {j.skip_reason}")
-    if j.status == "escalated" and j.error_log:
-        snippet = j.error_log.strip().splitlines()[-3:]
-        for line in snippet:
-            print(f"       {line[:140]}")
+        console.print(f"  [dim]\u23ed\ufe0f  \\[{j.stage}] {j.name} -- {j.skip_reason}[/]")
 
 
 async def run_run_command(args: argparse.Namespace) -> int:
@@ -124,23 +103,32 @@ async def run_run_command(args: argparse.Namespace) -> int:
     if getattr(args, "watch", False):
         return await _run_watch_mode(repo_root, driver, jobs, args)
 
+    # Normal run with TUI
     config = RunnerConfig(
         max_attempts=args.max_attempts,
         fail_fast=args.fail_fast,
     )
-    runner = Runner(repo_root=repo_root, driver=driver, config=config)
-    report = await runner.run(jobs, dry_run=False)
 
     if args.output == "json":
+        runner = Runner(repo_root=repo_root, driver=driver, config=config)
+        report = await runner.run(jobs, dry_run=False)
         print(json.dumps(report.to_dict(), indent=2))
-    else:
-        _print_report(report)
+        return report.exit_code()
 
+    # Rich TUI mode
+    console = Console()
+    ui = RunUI(console=console, agent=args.agent, repo=str(repo_root))
+    ui.init_jobs(jobs)
+    runner = Runner(repo_root=repo_root, driver=driver, config=config, callback=ui)
+
+    ui.start()
+    try:
+        report = await runner.run(jobs, dry_run=False)
+    finally:
+        ui.stop()
+
+    print_summary(console, report)
     return report.exit_code()
-
-
-def _timestamp() -> str:
-    return time.strftime("%H:%M:%S")
 
 
 def _runnable_names(jobs: list[CIJob]) -> list[str]:
@@ -153,22 +141,17 @@ async def _run_watch_mode(
     jobs: list[CIJob],
     args: argparse.Namespace,
 ) -> int:
-    """Watch mode: run jobs once, then re-run on each debounced filesystem change.
-
-    Phase A behavior: no-fix. `max_attempts` is forced to 1 so the driver is
-    never invoked. Jobs that fail are reported but no agent is spawned. This
-    keeps the user in full control of their editor/AI workflow.
-    """
+    """Watch mode with TUI. No-fix (max_attempts=1)."""
     runnable = _runnable_names(jobs)
     if not runnable:
-        print("stitch watch: nothing to run — all jobs are skipped", file=sys.stderr)
+        print("stitch watch: nothing to run -- all jobs are skipped", file=sys.stderr)
         return 0
 
-    config = RunnerConfig(
-        max_attempts=1,  # Phase A: no-fix
-        fail_fast=False,
-    )
-    runner = Runner(repo_root=repo_root, driver=driver, config=config)
+    config = RunnerConfig(max_attempts=1, fail_fast=False)
+    console = Console()
+    ui = RunUI(console=console, agent=args.agent, repo=str(repo_root))
+    ui.init_jobs(jobs)
+    runner = Runner(repo_root=repo_root, driver=driver, config=config, callback=ui)
     watch_cfg = WatchConfig(debounce_seconds=args.debounce)
 
     lock = StitchLock(repo_root)
@@ -178,17 +161,21 @@ async def _run_watch_mode(
         print(f"stitch watch: {exc}", file=sys.stderr)
         return 2
 
+    cycle = 0
     try:
-        print(f"\nstitch watch [{driver.name}]: monitoring {repo_root}")
-        print(f"  debounce: {args.debounce:.1f}s")
-        print(f"  jobs:     {', '.join(runnable)}")
-        print("  mode:     no-fix (reports only, never invokes agent)")
-        print("  press Ctrl+C to stop\n")
+        console.print(
+            f"\n[bold]stitch watch[/] [cyan]\\[{args.agent}][/]: "
+            f"monitoring [bold]{repo_root}[/]"
+        )
+        console.print(f"  debounce: {args.debounce:.1f}s, jobs: {', '.join(runnable)}")
+        console.print("  mode: [yellow]no-fix[/] (reports only)")
+        console.print("  press [bold]Ctrl+C[/] to stop\n")
 
-        # Initial run so the user has an immediate baseline
-        print(f"[{_timestamp()}] initial run")
+        # Initial run
+        ui.start()
         report = await runner.run(jobs, dry_run=False)
-        _print_report(report)
+        ui.stop()
+        print_summary(console, report)
 
         # Watch loop
         while True:
@@ -196,11 +183,17 @@ async def _run_watch_mode(
                 await wait_for_change_then_idle(repo_root, watch_cfg)
             except asyncio.CancelledError:
                 break
-            print(f"\n[{_timestamp()}] changes settled, re-running jobs")
+            cycle += 1
+            console.print(f"\n[dim][{time.strftime('%H:%M:%S')}] changes settled, re-running[/]")
+            ui.init_jobs(jobs)
+            ui.watch_cycle(cycle)
+            ui.start()
             report = await runner.run(jobs, dry_run=False)
-            _print_report(report)
+            ui.stop()
+            print_summary(console, report)
     except KeyboardInterrupt:
-        print("\nstitch watch: stopped")
+        ui.stop()
+        console.print("\n[dim]stitch watch: stopped[/]")
     finally:
         lock.release()
 

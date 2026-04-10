@@ -1,9 +1,9 @@
-"""Runner loop — orchestrate local CI execution with an AI fix loop."""
+"""Runner loop -- orchestrate local CI execution with an AI fix loop."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from stitch_agent.run.executor import LocalExecutor
 from stitch_agent.run.models import (
@@ -21,6 +21,25 @@ if TYPE_CHECKING:
 _ERROR_LOG_TAIL_CHARS = 4_000
 
 
+class RunnerCallback(Protocol):
+    """Callback protocol for UI integration."""
+
+    def job_started(self, name: str, attempt: int, max_attempts: int) -> None: ...
+    def job_log_update(self, name: str, log: str) -> None: ...
+    def job_finished(self, name: str, result: JobResult) -> None: ...
+
+
+class _NullCallback:
+    def job_started(self, name: str, attempt: int, max_attempts: int) -> None:
+        pass
+
+    def job_log_update(self, name: str, log: str) -> None:
+        pass
+
+    def job_finished(self, name: str, result: JobResult) -> None:
+        pass
+
+
 @dataclass
 class RunnerConfig:
     max_attempts: int = 3
@@ -35,6 +54,7 @@ class Runner:
         driver: AgentDriver,
         config: RunnerConfig | None = None,
         executor: LocalExecutor | None = None,
+        callback: RunnerCallback | None = None,
     ) -> None:
         self.repo_root = repo_root
         self.driver = driver
@@ -42,6 +62,7 @@ class Runner:
         self.executor = executor or LocalExecutor(
             repo_root, timeout_seconds=self.config.job_timeout_seconds,
         )
+        self._cb: RunnerCallback = callback or _NullCallback()
 
     async def run(
         self, jobs: list[CIJob], dry_run: bool = False,
@@ -81,10 +102,10 @@ class Runner:
 
             result = await self._run_single_job(job)
             results.append(result)
+            self._cb.job_finished(job.name, result)
 
             if result.status == "escalated" and self.config.fail_fast:
                 halted = True
-                # mark remaining jobs
                 for remaining in jobs[idx + 1 :]:
                     if remaining.skip_reason:
                         results.append(
@@ -106,8 +127,11 @@ class Runner:
         last_log = ""
 
         for attempt in range(1, self.config.max_attempts + 1):
+            self._cb.job_started(job.name, attempt, self.config.max_attempts)
+
             exec_result = await self.executor.run_job(job)
             last_log = exec_result.log
+            self._cb.job_log_update(job.name, exec_result.log)
 
             if exec_result.exit_code == 0:
                 return JobResult(
