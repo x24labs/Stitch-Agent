@@ -34,7 +34,7 @@ stitch run claude
   |- reports results (text or JSON)
 ```
 
-No API keys needed for `claude` or `codex` drivers. They use your existing CLI subscription.
+No API keys needed. Stitch uses your existing CLI subscription (Claude Pro, ChatGPT Plus).
 
 ## Claude Code skill (recommended)
 
@@ -70,7 +70,6 @@ stitch run claude --watch --debounce 5     # wait 5s of quiet before re-running
 Agents:
 - `claude` -- spawns Claude Code CLI (`claude -p`). Uses your Claude subscription.
 - `codex` -- spawns OpenAI Codex CLI. Uses your ChatGPT subscription.
-- `api` -- direct LLM API call via OpenRouter. Requires `STITCH_OPENROUTER_API_KEY`.
 
 ### `stitch setup`
 
@@ -135,7 +134,6 @@ Watch mode is no-fix by default: it only reports pass/fail, never invokes the ag
 
 | Variable | Purpose |
 |----------|---------|
-| `STITCH_OPENROUTER_API_KEY` | API key for the `api` driver (OpenRouter) |
 | `STITCH_GITLAB_TOKEN` | GitLab token for `stitch doctor` connectivity checks |
 | `STITCH_GITHUB_TOKEN` | GitHub token for `stitch doctor` connectivity checks |
 

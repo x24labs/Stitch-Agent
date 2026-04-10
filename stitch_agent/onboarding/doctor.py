@@ -27,7 +27,6 @@ async def run_doctor_checks(
     checks.append(_check_python_runtime())
     checks.append(_check_repo_exists(repo_root))
     checks.append(_check_config_file(repo_root))
-    checks.append(_check_anthropic_key(settings))
 
     provider_check = _check_provider_token(platform, settings)
     checks.append(provider_check)

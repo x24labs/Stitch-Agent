@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument(
         "agent",
-        choices=["claude", "codex", "api"],
+        choices=["claude", "codex"],
         help="Which agent to delegate fixes to",
     )
     run_parser.add_argument("--repo", default=".", help="Repository root path")

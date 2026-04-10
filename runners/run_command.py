@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 from stitch_agent.run.ci_parser import CIParseError, parse_ci_config
 from stitch_agent.run.drivers import (
     AgentDriver,
-    ApiDriver,
     ClaudeCodeDriver,
     CodexDriver,
 )
@@ -24,14 +23,13 @@ from stitch_agent.run.watcher import (
     WatchConfig,
     wait_for_change_then_idle,
 )
-from stitch_agent.settings import StitchSettings
 
 if TYPE_CHECKING:
     import argparse
 
     from stitch_agent.run.models import CIJob, JobResult, RunReport
 
-_VALID_AGENTS = ("claude", "codex", "api")
+_VALID_AGENTS = ("claude", "codex")
 
 _STATUS_ICONS = {
     "passed": "\u2705",
@@ -47,12 +45,6 @@ def _build_driver(agent: str) -> AgentDriver | None:
         return ClaudeCodeDriver()
     if agent == "codex":
         return CodexDriver()
-    if agent == "api":
-        settings = StitchSettings()
-        return ApiDriver(
-            api_key=settings.llm_api_key,
-            base_url=settings.llm_base_url,
-        )
     return None
 
 

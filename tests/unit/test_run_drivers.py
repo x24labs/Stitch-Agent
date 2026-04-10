@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from stitch_agent.run.drivers import (
-    ApiDriver,
     ClaudeCodeDriver,
     CodexDriver,
     build_prompt,
@@ -146,66 +145,3 @@ async def test_codex_driver_missing_binary(
     assert "not found" in outcome.reason
 
 
-@pytest.mark.asyncio
-async def test_api_driver_missing_key(tmp_path: Path) -> None:
-    driver = ApiDriver(api_key="")
-    outcome = await driver.fix(_ctx(tmp_path))
-    assert outcome.applied is False
-    assert "API_KEY" in outcome.reason or "api" in outcome.reason.lower()
-
-
-@pytest.mark.asyncio
-async def test_api_driver_applies_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """ApiDriver makes an LLM call, parses JSON, writes files to disk."""
-
-    class _FakeChoice:
-        class _Msg:
-            content = '{"changes": [{"path": "src/hello.py", "content": "print(42)\\n"}], "explanation": "fixed it"}'
-
-        message = _Msg()
-
-    class _FakeResponse:
-        choices = [_FakeChoice()]
-
-    async def fake_create(*_a: Any, **_kw: Any) -> _FakeResponse:
-        return _FakeResponse()
-
-    monkeypatch.setattr(
-        "stitch_agent.run.drivers.api.AsyncOpenAI",
-        lambda **_kw: type("C", (), {"chat": type("Ch", (), {"completions": type("Co", (), {"create": fake_create})()})()})(),
-    )
-
-    driver = ApiDriver(api_key="sk-test")
-    outcome = await driver.fix(_ctx(tmp_path))
-    assert outcome.applied is True
-    assert (tmp_path / "src" / "hello.py").read_text() == "print(42)\n"
-    assert "fixed it" in outcome.reason
-
-
-@pytest.mark.asyncio
-async def test_api_driver_no_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class _FakeChoice:
-        class _Msg:
-            content = '{"changes": [], "explanation": "cannot fix this"}'
-
-        message = _Msg()
-
-    class _FakeResponse:
-        choices = [_FakeChoice()]
-
-    async def fake_create(*_a: Any, **_kw: Any) -> _FakeResponse:
-        return _FakeResponse()
-
-    monkeypatch.setattr(
-        "stitch_agent.run.drivers.api.AsyncOpenAI",
-        lambda **_kw: type("C", (), {"chat": type("Ch", (), {"completions": type("Co", (), {"create": fake_create})()})()})(),
-    )
-
-    driver = ApiDriver(api_key="sk-test")
-    outcome = await driver.fix(_ctx(tmp_path))
-    assert outcome.applied is False
-    assert "cannot fix" in outcome.reason or "no changes" in outcome.reason.lower()
