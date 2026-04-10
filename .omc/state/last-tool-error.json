@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"uv run ruff check tests/integration/ 2>&1\",\"timeout\":30000,\"description\":\"Run ruff lint on integration tests\"}",
-  "error": "Exit code 1\nI001 [*] Import block is un-sorted or un-formatted\n  --> tests/integration/test_github_e2e.py:2:1\n   |\n 1 |   \"\"\"End-to-end GitHub adapter integration tests with mocked HTTP.\"\"\"\n 2 | / from __future__ import annotations\n 3 | |\n 4 | | import base64\n 5 | |\n 6 | | import httpx\n 7 | | import pytest\n 8 | | import respx\n 9 | |\n10 | | from stitch_agent.adapters.github import GitHubAdapter\n11 | | from stitch_agent.models import FixRequest\n12 | |\n13 | | from tests.integration.conftest import ...",
-  "timestamp": "2026-03-31T16:56:03.597Z",
-  "retry_count": 1
+  "tool_input_preview": "{\"command\":\"python3 << 'PYEOF'\\nimport yaml, os, re, json, subprocess\\n\\nhost = \\\"git.g24r.com\\\"\\ntoken_cfg = yaml.safe_load(open(os.path.expanduser('~/.config/glab-cli/config.yml')))\\ntoken = str(tok...",
+  "error": "Exit code 1\nTraceback (most recent call last):\n  File \"<stdin>\", line 17, in <module>\n  File \"/usr/lib/python3.13/json/__init__.py\", line 293, in load\n    return loads(fp.read(),\n        cls=cls, object_hook=object_hook,\n        parse_float=parse_float, parse_int=parse_int,\n        parse_constant=parse_constant, object_pairs_hook=object_pairs_hook, **kw)\n  File \"/usr/lib/python3.13/json/__init__.py\", line 346, in loads\n    return _default_decoder.decode(s)\n           ~~~~~~~~~~~~~~~~~~~~~~~^^^\n ...",
+  "timestamp": "2026-04-02T00:41:56.632Z",
+  "retry_count": 2
 }
