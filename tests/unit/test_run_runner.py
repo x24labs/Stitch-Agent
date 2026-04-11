@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from stitch_agent.run.executor import ExecResult, LocalExecutor
-from stitch_agent.run.models import CIJob, FixContext, FixOutcome
+from stitch_agent.run.models import CIJob, FixContext, FixOutcome, JobResult, RunReport
 from stitch_agent.run.runner import Runner, RunnerConfig
 
 if TYPE_CHECKING:
@@ -215,6 +215,38 @@ async def test_run_report_exit_code_on_failure(tmp_path: Path) -> None:
     report = await runner.run([_job("lint")])
     assert report.exit_code() == 1
     assert report.overall_status == "failed"
+
+
+def test_fixed_jobs_mixed_results() -> None:
+    report = RunReport(jobs=[
+        JobResult(name="lint", status="passed", attempts=2),
+        JobResult(name="typecheck", status="passed", attempts=1),
+        JobResult(name="test", status="passed", attempts=1),
+    ])
+    assert report.fixed_jobs == ["lint"]
+
+
+def test_fixed_jobs_none_fixed() -> None:
+    report = RunReport(jobs=[
+        JobResult(name="lint", status="passed", attempts=1),
+        JobResult(name="test", status="passed", attempts=1),
+    ])
+    assert report.fixed_jobs == []
+
+
+def test_fixed_jobs_all_passed_first_try() -> None:
+    report = RunReport(jobs=[
+        JobResult(name="lint", status="passed", attempts=1),
+    ])
+    assert report.fixed_jobs == []
+
+
+def test_fixed_jobs_excludes_escalated() -> None:
+    report = RunReport(jobs=[
+        JobResult(name="lint", status="escalated", attempts=3),
+        JobResult(name="test", status="passed", attempts=2),
+    ])
+    assert report.fixed_jobs == ["test"]
 
 
 @pytest.mark.asyncio

@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from runners.cli import build_parser, parse_cli_args
-from runners.run_command import run_run_command
+from runners.run_command import _auto_commit_push, run_run_command
+from stitch_agent.run.git import CommitResult, GitSnapshot, PushResult
+from stitch_agent.run.models import JobResult, RunReport
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -98,3 +101,150 @@ async def test_run_command_missing_repo() -> None:
     args = _make_args(repo="/nonexistent/path/definitely")
     code = await run_run_command(args)
     assert code == 2
+
+
+def test_parser_accepts_no_push_flag() -> None:
+    parser = build_parser()
+    ns = parse_cli_args(parser, ["run", "claude", "--no-push"])
+    assert ns.no_push is True
+
+
+def test_parser_no_push_default_false() -> None:
+    parser = build_parser()
+    ns = parse_cli_args(parser, ["run", "claude"])
+    assert ns.no_push is False
+
+
+# --- _auto_commit_push decision logic ---
+
+
+def _snap_pushable() -> GitSnapshot:
+    return GitSnapshot(clean=True, branch="main", has_remote=True, ahead=0)
+
+
+def _snap_dirty() -> GitSnapshot:
+    return GitSnapshot(clean=False, branch="main", has_remote=True, ahead=0)
+
+
+def _report_fixed() -> RunReport:
+    return RunReport(
+        jobs=[JobResult(name="lint", status="passed", attempts=2)],
+        agent="claude",
+    )
+
+
+def _report_no_fix() -> RunReport:
+    return RunReport(
+        jobs=[JobResult(name="lint", status="passed", attempts=1)],
+        agent="claude",
+    )
+
+
+def _report_failed() -> RunReport:
+    return RunReport(
+        jobs=[JobResult(name="lint", status="escalated", attempts=3)],
+        agent="claude",
+    )
+
+
+def test_auto_commit_push_all_conditions_met(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, int] = {"commit": 0, "push": 0}
+
+    def mock_commit(repo_root: Any, fixed_jobs: Any) -> CommitResult:
+        calls["commit"] += 1
+        return CommitResult(ok=True, sha="a" * 40, message="fix(stitch): lint")
+
+    def mock_push(repo_root: Any) -> PushResult:
+        calls["push"] += 1
+        return PushResult(ok=True)
+
+    monkeypatch.setattr("runners.run_command.commit", mock_commit)
+    monkeypatch.setattr("runners.run_command.push", mock_push)
+
+    from rich.console import Console
+    console = Console(file=io.StringIO())
+    _auto_commit_push(console, tmp_path, _snap_pushable(), _report_fixed(), no_push=False)
+    assert calls["commit"] == 1
+    assert calls["push"] == 1
+
+
+def test_auto_commit_push_dirty_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, int] = {"commit": 0, "push": 0}
+
+    def mock_commit(repo_root: Any, fixed_jobs: Any) -> CommitResult:
+        calls["commit"] += 1
+        return CommitResult(ok=True, sha="a" * 40, message="")
+
+    def mock_push(repo_root: Any) -> PushResult:
+        calls["push"] += 1
+        return PushResult(ok=True)
+
+    monkeypatch.setattr("runners.run_command.commit", mock_commit)
+    monkeypatch.setattr("runners.run_command.push", mock_push)
+
+    from rich.console import Console
+    console = Console(file=io.StringIO())
+    _auto_commit_push(console, tmp_path, _snap_dirty(), _report_fixed(), no_push=False)
+    assert calls["commit"] == 0
+    assert calls["push"] == 0
+
+
+def test_auto_commit_push_no_fix_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, int] = {"commit": 0}
+
+    def mock_commit(repo_root: Any, fixed_jobs: Any) -> CommitResult:
+        calls["commit"] += 1
+        return CommitResult(ok=True, sha="a" * 40, message="")
+
+    monkeypatch.setattr("runners.run_command.commit", mock_commit)
+
+    from rich.console import Console
+    console = Console(file=io.StringIO())
+    _auto_commit_push(console, tmp_path, _snap_pushable(), _report_no_fix(), no_push=False)
+    assert calls["commit"] == 0
+
+
+def test_auto_commit_push_failed_report_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, int] = {"commit": 0}
+
+    def mock_commit(repo_root: Any, fixed_jobs: Any) -> CommitResult:
+        calls["commit"] += 1
+        return CommitResult(ok=True, sha="a" * 40, message="")
+
+    monkeypatch.setattr("runners.run_command.commit", mock_commit)
+
+    from rich.console import Console
+    console = Console(file=io.StringIO())
+    _auto_commit_push(console, tmp_path, _snap_pushable(), _report_failed(), no_push=False)
+    assert calls["commit"] == 0
+
+
+def test_auto_commit_push_no_push_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, int] = {"commit": 0, "push": 0}
+
+    def mock_commit(repo_root: Any, fixed_jobs: Any) -> CommitResult:
+        calls["commit"] += 1
+        return CommitResult(ok=True, sha="a" * 40, message="fix(stitch): lint")
+
+    def mock_push(repo_root: Any) -> PushResult:
+        calls["push"] += 1
+        return PushResult(ok=True)
+
+    monkeypatch.setattr("runners.run_command.commit", mock_commit)
+    monkeypatch.setattr("runners.run_command.push", mock_push)
+
+    from rich.console import Console
+    console = Console(file=io.StringIO())
+    _auto_commit_push(console, tmp_path, _snap_pushable(), _report_fixed(), no_push=True)
+    assert calls["commit"] == 1
+    assert calls["push"] == 0

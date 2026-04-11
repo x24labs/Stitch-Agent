@@ -18,6 +18,7 @@ from stitch_agent.run.drivers import (
     CodexDriver,
 )
 from stitch_agent.run.filter import FilterConfig, apply_filter
+from stitch_agent.run.git import GitSnapshot, commit, push, snapshot
 from stitch_agent.run.runner import Runner, RunnerConfig
 from stitch_agent.run.ui import RunUI, print_summary
 from stitch_agent.run.watcher import (
@@ -30,9 +31,42 @@ from stitch_agent.run.watcher import (
 if TYPE_CHECKING:
     import argparse
 
-    from stitch_agent.run.models import CIJob
+    from stitch_agent.run.models import CIJob, RunReport
 
 _VALID_AGENTS = ("claude", "codex")
+
+
+def _auto_commit_push(
+    console: Console,
+    repo_root: Path,
+    snap: GitSnapshot,
+    report: RunReport,
+    *,
+    no_push: bool,
+) -> None:
+    """Commit and optionally push fix changes when conditions are met."""
+    if not snap.pushable or report.overall_status != "passed" or not report.fixed_jobs:
+        return
+
+    cr = commit(repo_root, report.fixed_jobs)
+    if not cr.ok:
+        console.print(f"[dim]stitch: auto-commit skipped ({cr.message})[/]")
+        return
+
+    console.print(
+        f"[green]\u2714[/] committed [bold]{cr.sha[:8]}[/] {cr.message}"
+    )
+
+    if no_push:
+        console.print("[dim]stitch: --no-push set, skipping push[/]")
+        return
+
+    pr = push(repo_root)
+    if pr.ok:
+        console.print("[green]\u2714[/] pushed to remote")
+    else:
+        console.print(f"[yellow]\u26a0[/] push failed: {pr.error}")
+        console.print("[dim]commit is preserved locally, push manually when ready[/]")
 
 
 def _build_driver(agent: str) -> AgentDriver | None:
@@ -103,6 +137,10 @@ async def run_run_command(args: argparse.Namespace) -> int:
     if getattr(args, "watch", False):
         return await _run_watch_mode(repo_root, driver, jobs, args)
 
+    # Capture git state before running (for auto-commit-push)
+    snap = snapshot(repo_root)
+    no_push = getattr(args, "no_push", False)
+
     # Normal run with TUI
     config = RunnerConfig(
         max_attempts=args.max_attempts,
@@ -113,6 +151,7 @@ async def run_run_command(args: argparse.Namespace) -> int:
         runner = Runner(repo_root=repo_root, driver=driver, config=config)
         report = await runner.run(jobs, dry_run=False)
         print(json.dumps(report.to_dict(), indent=2))
+        _auto_commit_push(Console(stderr=True), repo_root, snap, report, no_push=no_push)
         return report.exit_code()
 
     # Rich TUI mode
@@ -131,6 +170,7 @@ async def run_run_command(args: argparse.Namespace) -> int:
     else:
         ui.stop()
         print_summary(console, report)
+        _auto_commit_push(console, repo_root, snap, report, no_push=no_push)
         return report.exit_code()
 
 

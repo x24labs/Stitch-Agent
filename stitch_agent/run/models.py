@@ -64,6 +64,14 @@ class RunReport:
     agent: str = ""
 
     @property
+    def fixed_jobs(self) -> list[str]:
+        """Job names that were fixed (passed after more than one attempt)."""
+        return [
+            j.name for j in self.jobs
+            if j.status == "passed" and j.attempts > 1
+        ]
+
+    @property
     def overall_status(self) -> Literal["passed", "failed"]:
         non_skipped = [j for j in self.jobs if j.status != "skipped"]
         if not non_skipped:

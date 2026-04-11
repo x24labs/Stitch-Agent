@@ -53,6 +53,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated allowlist of job names to run (prefix match)",
     )
     run_parser.add_argument(
+        "--no-push",
+        action="store_true",
+        help="Commit fixes locally but skip pushing to remote",
+    )
+    run_parser.add_argument(
         "--watch",
         action="store_true",
         help=(
