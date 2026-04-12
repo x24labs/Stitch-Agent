@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
@@ -28,12 +29,14 @@ def test_build_prompt_with_existing_ci(tmp_path: Path) -> None:
     assert "deploy" in prompt
 
 
-class _FakeArgs:
+class _FakeArgs(argparse.Namespace):
     def __init__(self, **kwargs) -> None:  # noqa: ANN003
-        self.agent = kwargs.get("agent", "claude")
-        self.repo = kwargs.get("repo", ".")
-        self.output = kwargs.get("output", "text")
-        self.dry_run = kwargs.get("dry_run", False)
+        super().__init__(
+            agent=kwargs.get("agent", "claude"),
+            repo=kwargs.get("repo", "."),
+            output=kwargs.get("output", "text"),
+            dry_run=kwargs.get("dry_run", False),
+        )
 
 
 @pytest.mark.asyncio
