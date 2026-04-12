@@ -18,7 +18,13 @@ from stitch_agent.run.drivers import (
     ClaudeCodeDriver,
     CodexDriver,
 )
-from stitch_agent.run.filter import FilterConfig, apply_filter
+from stitch_agent.run.filter import (
+    FilterConfig,
+    apply_filter,
+    classify_with_llm,
+    load_cache,
+    save_cache,
+)
 from stitch_agent.run.git import GitSnapshot, commit, push, snapshot
 from stitch_agent.run.runner import Runner, RunnerConfig
 from stitch_agent.run.ui import RunUI, print_summary
@@ -120,10 +126,28 @@ async def run_run_command(args: argparse.Namespace) -> int:
         return 0
 
     filter_cfg = FilterConfig()
+    classifications: dict[str, str] | None = None
+
     if args.jobs:
         filter_cfg.only = [j.strip() for j in args.jobs.split(",") if j.strip()]
+    else:
+        # LLM-based classification with cache
+        job_names = [j.name for j in all_jobs]
+        classifications = load_cache(repo_root, job_names)
+        if classifications is None:
+            console = Console(stderr=(args.output == "json"))
+            console.print(
+                "[dim]stitch: classifying jobs "
+                f"with {args.agent}...[/]"
+            )
+            classifications = await classify_with_llm(
+                job_names, agent=args.agent, repo_root=repo_root,
+            )
+            if classifications:
+                save_cache(repo_root, job_names, classifications)
+                console.print("[dim]stitch: saved to .stitch/jobs.json[/]")
 
-    jobs = apply_filter(all_jobs, filter_cfg)
+    jobs = apply_filter(all_jobs, filter_cfg, classifications=classifications)
 
     if args.agent not in _VALID_AGENTS:
         print(

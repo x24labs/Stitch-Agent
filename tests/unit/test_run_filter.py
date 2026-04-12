@@ -2,95 +2,24 @@
 
 from __future__ import annotations
 
-from stitch_agent.run.filter import FilterConfig, apply_filter, classify_job
+from typing import TYPE_CHECKING
+
+from stitch_agent.run.filter import (
+    FilterConfig,
+    _job_names_hash,
+    _parse_classification,
+    apply_filter,
+    load_cache,
+    save_cache,
+)
 from stitch_agent.run.models import CIJob
 
-
-def _job(name: str, stage: str = "test", script: list[str] | None = None) -> CIJob:
-    return CIJob(name=name, stage=stage, script=script or ["echo"])
-
-
-# ---------------------------------------------------------------------------
-# classify_job
-# ---------------------------------------------------------------------------
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
-class TestClassifyJob:
-    def test_lint_is_verification(self) -> None:
-        assert classify_job(_job("lint", stage="check")) is None
-
-    def test_test_unit_is_verification(self) -> None:
-        assert classify_job(_job("test:unit", stage="check")) is None
-
-    def test_audit_is_verification(self) -> None:
-        assert classify_job(_job("audit", stage="check")) is None
-
-    def test_build_is_verification(self) -> None:
-        assert classify_job(_job("build", stage="build")) is None
-
-    def test_typecheck_is_verification(self) -> None:
-        assert classify_job(_job("typecheck", stage="check")) is None
-
-    def test_docker_build_is_infra(self) -> None:
-        reason = classify_job(_job("docker:build", stage="docker"))
-        assert reason is not None
-        assert "infrastructure" in reason
-
-    def test_deploy_is_infra(self) -> None:
-        reason = classify_job(_job("deploy:dokploy", stage="deploy"))
-        assert reason is not None
-        assert "infrastructure" in reason
-
-    def test_cleanup_images_is_infra(self) -> None:
-        reason = classify_job(_job("cleanup:images", stage="cleanup"))
-        assert reason is not None
-        assert "infrastructure" in reason
-
-    def test_publish_is_infra(self) -> None:
-        reason = classify_job(_job("publish-npm", stage="release"))
-        assert reason is not None
-
-    def test_verify_pattern_wins_over_infra(self) -> None:
-        """A job named 'test-docker' has 'test' which is verify, takes priority."""
-        assert classify_job(_job("test-docker", stage="test")) is None
-
-    def test_unknown_job_runs(self) -> None:
-        """Jobs matching neither verify nor infra get benefit of the doubt."""
-        assert classify_job(_job("custom-stuff", stage="misc")) is None
-
-    def test_stage_based_detection(self) -> None:
-        """A job in stage 'deploy' is infra even if name is neutral."""
-        reason = classify_job(_job("webhook", stage="deploy"))
-        assert reason is not None
-        assert "infrastructure" in reason
-
-    def test_verify_stage_allows_run(self) -> None:
-        """A job in stage 'check' runs even if name is neutral."""
-        assert classify_job(_job("custom-check-thing", stage="check")) is None
-
-
-# ---------------------------------------------------------------------------
-# apply_filter with auto_classify
-# ---------------------------------------------------------------------------
-
-
-def test_auto_classify_filters_infra_jobs() -> None:
-    jobs = [
-        _job("lint", stage="check"),
-        _job("test:unit", stage="check"),
-        _job("audit", stage="check"),
-        _job("build", stage="build"),
-        _job("docker:build", stage="docker"),
-        _job("deploy:dokploy", stage="deploy"),
-        _job("cleanup:images", stage="cleanup"),
-    ]
-    filtered = apply_filter(jobs, FilterConfig())
-    names_running = [j.name for j in filtered if j.skip_reason is None]
-    names_skipped = [j.name for j in filtered if j.skip_reason is not None]
-    assert names_running == ["lint", "test:unit", "audit", "build"]
-    assert "docker:build" in names_skipped
-    assert "deploy:dokploy" in names_skipped
-    assert "cleanup:images" in names_skipped
+def _job(name: str, stage: str = "test") -> CIJob:
+    return CIJob(name=name, stage=stage, script=["echo"])
 
 
 # ---------------------------------------------------------------------------
@@ -134,20 +63,124 @@ def test_only_mode_exact_name_still_works() -> None:
     assert filtered[1].skip_reason is not None
 
 
-def test_only_overrides_classification() -> None:
-    """When --jobs is set, classification is bypassed."""
+# ---------------------------------------------------------------------------
+# apply_filter with LLM classifications
+# ---------------------------------------------------------------------------
+
+
+def test_classification_skips_infra() -> None:
+    jobs = [
+        _job("lint", stage="check"),
+        _job("test:unit", stage="check"),
+        _job("docker:build", stage="docker"),
+        _job("deploy:prod", stage="deploy"),
+    ]
+    classifications = {
+        "lint": "verify",
+        "test:unit": "verify",
+        "docker:build": "infra",
+        "deploy:prod": "infra",
+    }
+    filtered = apply_filter(jobs, FilterConfig(), classifications=classifications)
+    assert filtered[0].skip_reason is None
+    assert filtered[1].skip_reason is None
+    assert filtered[2].skip_reason is not None
+    assert "infrastructure" in filtered[2].skip_reason
+    assert filtered[3].skip_reason is not None
+
+
+def test_no_classifications_runs_all() -> None:
+    """Without classifications or --jobs, all jobs run."""
+    jobs = [_job("lint"), _job("docker:build")]
+    filtered = apply_filter(jobs, FilterConfig())
+    assert all(j.skip_reason is None for j in filtered)
+
+
+def test_only_overrides_classifications() -> None:
+    """--jobs takes priority over LLM classifications."""
     jobs = [_job("docker:build", stage="docker")]
+    classifications = {"docker:build": "infra"}
     cfg = FilterConfig(only=["docker"])
-    filtered = apply_filter(jobs, cfg)
+    filtered = apply_filter(jobs, cfg, classifications=classifications)
     assert filtered[0].skip_reason is None
 
 
-def test_auto_classify_disabled() -> None:
-    """When auto_classify=False, all jobs run."""
-    jobs = [
-        _job("lint", stage="check"),
-        _job("docker:build", stage="docker"),
-    ]
-    cfg = FilterConfig(auto_classify=False)
-    filtered = apply_filter(jobs, cfg)
-    assert all(j.skip_reason is None for j in filtered)
+# ---------------------------------------------------------------------------
+# _parse_classification
+# ---------------------------------------------------------------------------
+
+
+def test_parse_clean_json() -> None:
+    raw = '{"lint": "verify", "deploy": "infra"}'
+    result = _parse_classification(raw, ["lint", "deploy"])
+    assert result == {"lint": "verify", "deploy": "infra"}
+
+
+def test_parse_with_markdown_fences() -> None:
+    raw = '```json\n{"lint": "verify", "deploy": "infra"}\n```'
+    result = _parse_classification(raw, ["lint", "deploy"])
+    assert result == {"lint": "verify", "deploy": "infra"}
+
+
+def test_parse_with_extra_text() -> None:
+    raw = 'Here is the classification:\n{"lint": "verify", "deploy": "infra"}\nDone.'
+    result = _parse_classification(raw, ["lint", "deploy"])
+    assert result == {"lint": "verify", "deploy": "infra"}
+
+
+def test_parse_missing_job_defaults_to_verify() -> None:
+    raw = '{"lint": "verify"}'
+    result = _parse_classification(raw, ["lint", "test"])
+    assert result is not None
+    assert result["lint"] == "verify"
+    assert result["test"] == "verify"
+
+
+def test_parse_invalid_returns_none() -> None:
+    assert _parse_classification("not json at all", ["lint"]) is None
+
+
+def test_parse_invalid_value_defaults_to_verify() -> None:
+    raw = '{"lint": "banana"}'
+    result = _parse_classification(raw, ["lint"])
+    assert result is not None
+    assert result["lint"] == "verify"
+
+
+# ---------------------------------------------------------------------------
+# Cache
+# ---------------------------------------------------------------------------
+
+
+def test_save_and_load_cache(tmp_path: Path) -> None:
+    names = ["lint", "test", "deploy"]
+    classifications = {"lint": "verify", "test": "verify", "deploy": "infra"}
+    save_cache(tmp_path, names, classifications)
+
+    loaded = load_cache(tmp_path, names)
+    assert loaded == classifications
+
+
+def test_cache_invalidated_on_job_change(tmp_path: Path) -> None:
+    names_v1 = ["lint", "test"]
+    save_cache(tmp_path, names_v1, {"lint": "verify", "test": "verify"})
+
+    names_v2 = ["lint", "test", "deploy"]
+    assert load_cache(tmp_path, names_v2) is None
+
+
+def test_cache_returns_none_when_missing(tmp_path: Path) -> None:
+    assert load_cache(tmp_path, ["lint"]) is None
+
+
+def test_cache_returns_none_on_corrupt_file(tmp_path: Path) -> None:
+    cache_dir = tmp_path / ".stitch"
+    cache_dir.mkdir()
+    (cache_dir / "jobs.json").write_text("not json")
+    assert load_cache(tmp_path, ["lint"]) is None
+
+
+def test_hash_is_order_independent() -> None:
+    h1 = _job_names_hash(["lint", "test", "deploy"])
+    h2 = _job_names_hash(["deploy", "lint", "test"])
+    assert h1 == h2
