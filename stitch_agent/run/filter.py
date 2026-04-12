@@ -32,11 +32,22 @@ VERIFY_PATTERNS: list[str] = [
 ]
 
 # Patterns that identify infrastructure / non-verification jobs.
+# Compound patterns (e.g. build.wheel) are checked first and bypass the
+# positional tie-breaking logic, so "build:wheel" is infra even though
+# "build" alone is a verify signal.
+INFRA_COMPOUND_PATTERNS: list[str] = [
+    r"build[:\-_]wheel",
+    r"build[:\-_]docker",
+    r"build[:\-_]image",
+    r"build[:\-_]package",
+]
+
 INFRA_PATTERNS: list[str] = [
     r"deploy",
     r"publish",
     r"release",
     r"docker",
+    r"wheel",
     r"image",
     r"container",
     r"push",
@@ -52,11 +63,13 @@ INFRA_PATTERNS: list[str] = [
     r"sync",
     r"tag",
     r"mirror",
+    r"package",
     r"stitch",
 ]
 
 _VERIFY_RE = [re.compile(p, re.IGNORECASE) for p in VERIFY_PATTERNS]
 _INFRA_RE = [re.compile(p, re.IGNORECASE) for p in INFRA_PATTERNS]
+_INFRA_COMPOUND_RE = [re.compile(p, re.IGNORECASE) for p in INFRA_COMPOUND_PATTERNS]
 
 
 def _earliest_match(text: str, patterns: list[re.Pattern[str]]) -> int | None:
@@ -80,10 +93,16 @@ def classify_job(job: CIJob) -> str | None:
     The job *name* is the primary signal. When both verify and infra
     patterns match the name, the one appearing earliest wins (e.g.
     ``docker:build`` -> ``docker`` at pos 0 beats ``build`` at pos 7).
-    The *stage* is a secondary hint.
+    Compound infra patterns (e.g. ``build:wheel``) are checked first and
+    always win regardless of position. The *stage* is a secondary hint.
 
     Fallback: unknown jobs run (benefit of the doubt).
     """
+    # Compound patterns bypass positional logic.
+    for pat in _INFRA_COMPOUND_RE:
+        if pat.search(job.name):
+            return f"infrastructure job (matches '{pat.pattern}')"
+
     name_verify_pos = _earliest_match(job.name, _VERIFY_RE)
     name_infra_pos = _earliest_match(job.name, _INFRA_RE)
 
