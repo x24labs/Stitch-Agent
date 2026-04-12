@@ -45,7 +45,7 @@ def _auto_commit_push(
     no_push: bool,
 ) -> None:
     """Commit and optionally push fix changes when conditions are met."""
-    if not snap.pushable or report.overall_status != "passed" or not report.fixed_jobs:
+    if not snap.committable or report.overall_status != "passed" or not report.fixed_jobs:
         return
 
     cr = commit(repo_root, report.fixed_jobs)
@@ -59,6 +59,10 @@ def _auto_commit_push(
 
     if no_push:
         console.print("[dim]stitch: --no-push set, skipping push[/]")
+        return
+
+    if not snap.pushable:
+        console.print("[dim]stitch: branch has unpushed commits, skipping push[/]")
         return
 
     pr = push(repo_root)

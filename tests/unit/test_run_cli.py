@@ -248,3 +248,59 @@ def test_auto_commit_push_no_push_flag(
     _auto_commit_push(console, tmp_path, _snap_pushable(), _report_fixed(), no_push=True)
     assert calls["commit"] == 1
     assert calls["push"] == 0
+
+
+def _snap_no_remote() -> GitSnapshot:
+    return GitSnapshot(clean=True, branch="feature/foo", has_remote=False, ahead=0)
+
+
+def _snap_ahead() -> GitSnapshot:
+    return GitSnapshot(clean=True, branch="main", has_remote=True, ahead=2)
+
+
+def test_auto_commit_push_no_remote_still_pushes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No upstream yet: should commit AND push (push -u origin branch)."""
+    calls: dict[str, int] = {"commit": 0, "push": 0}
+
+    def mock_commit(repo_root: Any, fixed_jobs: Any) -> CommitResult:
+        calls["commit"] += 1
+        return CommitResult(ok=True, sha="a" * 40, message="fix(stitch): lint")
+
+    def mock_push(repo_root: Any) -> PushResult:
+        calls["push"] += 1
+        return PushResult(ok=True)
+
+    monkeypatch.setattr("runners.run_command.commit", mock_commit)
+    monkeypatch.setattr("runners.run_command.push", mock_push)
+
+    from rich.console import Console
+    console = Console(file=io.StringIO())
+    _auto_commit_push(console, tmp_path, _snap_no_remote(), _report_fixed(), no_push=False)
+    assert calls["commit"] == 1
+    assert calls["push"] == 1
+
+
+def test_auto_commit_push_ahead_commits_but_skips_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Branch has unpushed user commits: commit the fix but don't push."""
+    calls: dict[str, int] = {"commit": 0, "push": 0}
+
+    def mock_commit(repo_root: Any, fixed_jobs: Any) -> CommitResult:
+        calls["commit"] += 1
+        return CommitResult(ok=True, sha="a" * 40, message="fix(stitch): lint")
+
+    def mock_push(repo_root: Any) -> PushResult:
+        calls["push"] += 1
+        return PushResult(ok=True)
+
+    monkeypatch.setattr("runners.run_command.commit", mock_commit)
+    monkeypatch.setattr("runners.run_command.push", mock_push)
+
+    from rich.console import Console
+    console = Console(file=io.StringIO())
+    _auto_commit_push(console, tmp_path, _snap_ahead(), _report_fixed(), no_push=False)
+    assert calls["commit"] == 1
+    assert calls["push"] == 0

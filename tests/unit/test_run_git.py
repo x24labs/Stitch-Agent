@@ -63,9 +63,25 @@ def test_snapshot_not_pushable_dirty() -> None:
     assert snap.pushable is False
 
 
-def test_snapshot_not_pushable_no_remote() -> None:
+def test_snapshot_pushable_no_remote() -> None:
+    """No remote yet is still pushable (will push -u origin)."""
     snap = GitSnapshot(clean=True, branch="main", has_remote=False, ahead=0)
-    assert snap.pushable is False
+    assert snap.pushable is True
+
+
+def test_snapshot_committable() -> None:
+    snap = GitSnapshot(clean=True, branch="main", has_remote=False, ahead=0)
+    assert snap.committable is True
+
+
+def test_snapshot_not_committable_dirty() -> None:
+    snap = GitSnapshot(clean=False, branch="main", has_remote=False, ahead=0)
+    assert snap.committable is False
+
+
+def test_snapshot_not_committable_detached() -> None:
+    snap = GitSnapshot(clean=True, branch=None, has_remote=False, ahead=0)
+    assert snap.committable is False
 
 
 def test_snapshot_not_pushable_ahead() -> None:
@@ -159,6 +175,34 @@ def test_push_success(tmp_path: Path) -> None:
     _git(["commit", "-m", "fix"], repo)
     pr = push(repo)
     assert pr.ok is True
+
+
+def test_push_sets_upstream(tmp_path: Path) -> None:
+    """Push to a repo with a remote but no upstream configured."""
+    bare = tmp_path / "bare.git"
+    bare.mkdir()
+    _git(["init", "--bare", "-b", "main"], bare)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(["init", "-b", "main"], repo)
+    _git(["config", "user.email", "test@test.com"], repo)
+    _git(["config", "user.name", "Test"], repo)
+    _git(["remote", "add", "origin", str(bare)], repo)
+    (repo / "file.txt").write_text("hello")
+    _git(["add", "file.txt"], repo)
+    _git(["commit", "-m", "initial"], repo)
+
+    pr = push(repo)
+    assert pr.ok is True
+
+    # Verify upstream was set
+    upstream = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "@{u}"], cwd=str(repo),
+        capture_output=True, text=True, check=False,
+    )
+    assert upstream.returncode == 0
+    assert "origin/main" in upstream.stdout.strip()
 
 
 def test_push_diverged(tmp_path: Path) -> None:

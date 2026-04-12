@@ -36,6 +36,24 @@ stitch run claude
 
 Uses your existing CLI subscription (Claude Pro, ChatGPT Plus). Zero config.
 
+## Why Stitch
+
+Other tools fix CI failures with AI. None of them work like Stitch.
+
+| | Stitch | [Gitar](https://gitar.ai) | [Nx Cloud](https://nx.dev/docs/features/ci-features/self-healing-ci) | [Dagger + AI](https://dagger.io/blog/automate-your-ci-fixes-self-healing-pipelines-with-ai-agents/) |
+|---|---|---|---|---|
+| Uses your existing CI config | Yes | No | No | No |
+| Runs jobs locally | Yes | Cloud only | Cloud only | Containers |
+| Pluggable AI agent | Any CLI agent | Built-in only | Built-in only | Built-in only |
+| Requires new infra | No | SaaS account | Nx monorepo | Dagger SDK |
+| Pricing | Free (MIT) | From $20/user/mo | Nx Cloud plan | Free (OSS) |
+
+**Gitar** and **Nx Cloud** are cloud platforms. They intercept failures in remote CI, fix them, and push commits to your PR. Powerful, but you need their platform, and every fix attempt costs a remote CI cycle.
+
+**Dagger** can run locally, but you rewrite your pipelines in their SDK. It does not read your existing `.gitlab-ci.yml` or GitHub Actions workflows.
+
+**Stitch** takes the CI config you already have, runs it on your machine in seconds, and hands failures to whichever AI agent CLI you prefer. No vendor lock-in, no rewrite, no waiting for remote runners. Just `stitch run claude` and move on.
+
 ## Claude Code skill (recommended)
 
 Install the stitch skill so Claude Code validates your changes automatically before push, at the end of tasks, and when switching contexts.
