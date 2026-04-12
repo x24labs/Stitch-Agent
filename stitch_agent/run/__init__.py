@@ -5,6 +5,7 @@ execute jobs locally, and delegate fix attempts to an AI agent CLI (Claude Code,
 Codex) or the existing API-based Fixer.
 """
 
+from stitch_agent.run.ci_detect import CIPlatform
 from stitch_agent.run.models import (
     CIJob,
     FixContext,
@@ -15,6 +16,7 @@ from stitch_agent.run.models import (
 
 __all__ = [
     "CIJob",
+    "CIPlatform",
     "FixContext",
     "FixOutcome",
     "JobResult",

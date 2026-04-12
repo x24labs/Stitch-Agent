@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from stitch_agent.run.ci_detect import CIPlatform
 from stitch_agent.run.ci_parser import (
     CIParseError,
     _parse_github_workflow,
@@ -162,3 +163,27 @@ jobs:
     names = [j.name for j in jobs]
     assert "lint" in names
     assert "build" in names
+
+
+def test_parse_ci_config_platform_gitlab_only(tmp_path: Path) -> None:
+    """When platform=GITLAB, GitHub workflows are ignored."""
+    (tmp_path / ".gitlab-ci.yml").write_text("lint:\n  script: ruff check .\n")
+    gh = tmp_path / ".github" / "workflows"
+    gh.mkdir(parents=True)
+    (gh / "ci.yml").write_text("jobs:\n  build:\n    steps:\n      - run: make build\n")
+    jobs = parse_ci_config(tmp_path, platform=CIPlatform.GITLAB)
+    names = [j.name for j in jobs]
+    assert "lint" in names
+    assert "build" not in names
+
+
+def test_parse_ci_config_platform_github_only(tmp_path: Path) -> None:
+    """When platform=GITHUB, GitLab CI is ignored."""
+    (tmp_path / ".gitlab-ci.yml").write_text("lint:\n  script: ruff check .\n")
+    gh = tmp_path / ".github" / "workflows"
+    gh.mkdir(parents=True)
+    (gh / "ci.yml").write_text("jobs:\n  build:\n    steps:\n      - run: make build\n")
+    jobs = parse_ci_config(tmp_path, platform=CIPlatform.GITHUB)
+    names = [j.name for j in jobs]
+    assert "build" in names
+    assert "lint" not in names
