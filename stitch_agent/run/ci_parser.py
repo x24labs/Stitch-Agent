@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from stitch_agent.run.ci_detect import CIPlatform
 from stitch_agent.run.models import CIJob
 
 if TYPE_CHECKING:
@@ -44,22 +45,35 @@ _GITLAB_RESERVED_KEYS: frozenset[str] = frozenset(
 _DEFAULT_GITLAB_STAGES: list[str] = [".pre", "build", "test", "deploy", ".post"]
 
 
-def parse_ci_config(repo_root: Path) -> list[CIJob]:
-    """Parse all CI files in the repo. Returns ordered jobs across all files.
+def parse_ci_config(
+    repo_root: Path,
+    platform: CIPlatform = CIPlatform.UNKNOWN,
+) -> list[CIJob]:
+    """Parse CI files in the repo. Returns ordered jobs.
+
+    When *platform* is a specific value (GITLAB or GITHUB), only that
+    platform's config is parsed. When UNKNOWN, both are tried (original
+    behaviour).
 
     Order: GitLab jobs first (if present), then GitHub workflow jobs sorted by
     filename. Within GitLab, jobs are ordered by stage. Within a stage, by
     insertion order from the YAML file.
     """
     jobs: list[CIJob] = []
-    gl_path = repo_root / ".gitlab-ci.yml"
-    if gl_path.is_file():
-        jobs.extend(_parse_gitlab_ci(gl_path))
 
-    gh_dir = repo_root / ".github" / "workflows"
-    if gh_dir.is_dir():
-        for wf in sorted(gh_dir.glob("*.yml")) + sorted(gh_dir.glob("*.yaml")):
-            jobs.extend(_parse_github_workflow(wf))
+    parse_gitlab = platform in (CIPlatform.GITLAB, CIPlatform.UNKNOWN)
+    parse_github = platform in (CIPlatform.GITHUB, CIPlatform.UNKNOWN)
+
+    if parse_gitlab:
+        gl_path = repo_root / ".gitlab-ci.yml"
+        if gl_path.is_file():
+            jobs.extend(_parse_gitlab_ci(gl_path))
+
+    if parse_github:
+        gh_dir = repo_root / ".github" / "workflows"
+        if gh_dir.is_dir():
+            for wf in sorted(gh_dir.glob("*.yml")) + sorted(gh_dir.glob("*.yaml")):
+                jobs.extend(_parse_github_workflow(wf))
 
     return jobs
 

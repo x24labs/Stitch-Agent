@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from rich.console import Console
 
+from stitch_agent.run.ci_detect import detect_platform
 from stitch_agent.run.ci_parser import CIParseError, parse_ci_config
 from stitch_agent.run.drivers import (
     AgentDriver,
@@ -102,8 +103,10 @@ async def run_run_command(args: argparse.Namespace) -> int:
         print(f"Error: repo path not found: {repo_root}", file=sys.stderr)
         return 2
 
+    platform = detect_platform(repo_root)
+
     try:
-        all_jobs = parse_ci_config(repo_root)
+        all_jobs = parse_ci_config(repo_root, platform=platform)
     except CIParseError as exc:
         print(f"Error parsing CI config: {exc}", file=sys.stderr)
         return 2
