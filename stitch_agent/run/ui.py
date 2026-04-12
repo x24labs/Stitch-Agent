@@ -38,10 +38,10 @@ class RunUI:
         self.agent = agent
         self.repo = repo
         self.jobs: list[_JobState] = []
-        self._active_job: str | None = None
-        self._active_log: str = ""
-        self._active_attempt: int = 0
-        self._active_max_attempts: int = 3
+        self._active_jobs: set[str] = set()
+        self._fixing_label: str | None = None
+        self._fixing_log: str = ""
+        self._driver_name: str = "agent"
         self._start_time: float = 0.0
         self._live: Live | None = None
         self._watch_cycle: int = 0
@@ -77,22 +77,22 @@ class RunUI:
             self._live = None
 
     def job_started(self, name: str, attempt: int, max_attempts: int) -> None:
-        self._active_job = name
-        self._active_log = ""
-        self._active_attempt = attempt
-        self._active_max_attempts = max_attempts
+        self._active_jobs.add(name)
         for j in self.jobs:
             if j.name == name:
                 j.status = "running"
                 j.start_time = time.monotonic()
                 j.attempts = attempt
+                j.max_attempts = max_attempts
                 break
         self._refresh()
 
     def job_log_update(self, name: str, log: str) -> None:
-        if name == self._active_job:
-            self._active_log = log
-            self._refresh()
+        for j in self.jobs:
+            if j.name == name:
+                j.log = log
+                break
+        self._refresh()
 
     def job_finished(self, name: str, result: JobResult) -> None:
         for j in self.jobs:
@@ -102,34 +102,37 @@ class RunUI:
                 j.duration = time.monotonic() - (j.start_time or time.monotonic())
                 j.error_log = result.error_log
                 break
-        if name == self._active_job:
-            self._active_job = None
-            self._active_log = ""
+        self._active_jobs.discard(name)
         self._refresh()
 
     def driver_started(self, name: str, driver_name: str) -> None:
-        self._active_job = name
-        self._active_log = ""
+        self._fixing_label = name
+        self._fixing_log = ""
         self._driver_name = driver_name
+        # name may be comma-separated for batch fixes
+        job_names = {n.strip() for n in name.split(",")}
         for j in self.jobs:
-            if j.name == name:
+            if j.name in job_names:
                 j.status = "fixing"
-                break
         self._refresh()
 
     def driver_log_update(self, name: str, log: str) -> None:
-        if name == self._active_job:
-            self._active_log = log
+        if name == self._fixing_label:
+            self._fixing_log = log
             self._refresh()
 
     def watch_cycle(self, cycle: int) -> None:
         self._watch_cycle = cycle
+        self._active_jobs.clear()
+        self._fixing_label = None
+        self._fixing_log = ""
         for j in self.jobs:
             if j.status != "skipped":
                 j.status = "pending"
                 j.duration = None
                 j.attempts = 0
                 j.error_log = ""
+                j.log = ""
         self._refresh()
 
     def _refresh(self) -> None:
@@ -143,7 +146,7 @@ class RunUI:
         table = self._render_table()
         parts: list[RenderableType] = [header, Text(), table]
 
-        if self._active_job and self._active_log:
+        if self._fixing_label and self._fixing_log:
             log_panel = self._render_log_panel()
             parts.append(Text())
             parts.append(log_panel)
@@ -205,21 +208,21 @@ class RunUI:
         info = Text()
         if j.status == "fixing":
             elapsed = time.monotonic() - (j.start_time or time.monotonic())
-            driver = getattr(self, "_driver_name", "agent")
+            driver = self._driver_name
             info.append(f"fixing with {driver}", style="magenta bold")
             info.append(f" {elapsed:.1f}s", style="dim")
-            if self._active_max_attempts > 1:
+            if j.max_attempts > 1:
                 info.append(
-                    f" (attempt {self._active_attempt}/{self._active_max_attempts})",
+                    f" (attempt {j.attempts}/{j.max_attempts})",
                     style="dim",
                 )
         elif j.status == "running":
             elapsed = time.monotonic() - (j.start_time or time.monotonic())
             info.append("running", style="yellow")
             info.append(f" {elapsed:.1f}s", style="dim")
-            if self._active_max_attempts > 1:
+            if j.max_attempts > 1:
                 info.append(
-                    f" (attempt {self._active_attempt}/{self._active_max_attempts})",
+                    f" (attempt {j.attempts}/{j.max_attempts})",
                     style="dim",
                 )
         elif j.status == "passed":
@@ -243,7 +246,7 @@ class RunUI:
         return info
 
     def _render_log_panel(self) -> Panel:
-        lines = self._active_log.strip().splitlines()
+        lines = self._fixing_log.strip().splitlines()
         tail = lines[-_LOG_TAIL_LINES:] if len(lines) > _LOG_TAIL_LINES else lines
         truncated = len(lines) > _LOG_TAIL_LINES
 
@@ -260,22 +263,15 @@ class RunUI:
             else:
                 log_text.append(f"  {line}\n", style="dim")
 
-        job_name = self._active_job or ""
-        is_fixing = any(j.name == job_name and j.status == "fixing" for j in self.jobs)
-        if is_fixing:
-            driver = getattr(self, "_driver_name", "agent")
-            title = Text.assemble(
-                (f"{job_name} ", "bold"),
-                (f"fixing with {driver}", "magenta"),
-            )
-            border = "magenta"
-        else:
-            title = Text(job_name, style="bold")
-            border = "yellow"
+        label = self._fixing_label or ""
+        title = Text.assemble(
+            (f"{label} ", "bold"),
+            (f"fixing with {self._driver_name}", "magenta"),
+        )
         return Panel(
             log_text,
             title=title,
-            border_style=border,
+            border_style="magenta",
             padding=(0, 1),
         )
 
@@ -311,7 +307,9 @@ class _JobState:
         self.start_time: float | None = None
         self.duration: float | None = None
         self.attempts: int = 0
+        self.max_attempts: int = 1
         self.error_log: str = ""
+        self.log: str = ""
 
 
 def _is_error_line(line: str) -> bool:
