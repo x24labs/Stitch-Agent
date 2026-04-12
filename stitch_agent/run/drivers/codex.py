@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import shutil
-from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from stitch_agent.run.drivers.base import build_prompt
 from stitch_agent.run.models import FixContext, FixOutcome
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @dataclass
