@@ -73,6 +73,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Seconds of filesystem quiet before re-running in watch mode",
     )
 
+    gen_parser = subparsers.add_parser(
+        "generate",
+        help="Generate CI test/lint jobs using an AI agent",
+    )
+    gen_parser.add_argument(
+        "agent",
+        choices=["claude", "codex"],
+        help="Which agent to use for generation",
+    )
+    gen_parser.add_argument("--repo", default=".", help="Repository root path")
+    gen_parser.add_argument(
+        "--output",
+        choices=["text", "json"],
+        default="text",
+        help="Output format",
+    )
+    gen_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Analyze repo without calling the LLM",
+    )
+
     return p
 
 
@@ -88,7 +110,11 @@ async def run(args: argparse.Namespace) -> int:
         from runners.run_command import run_run_command
 
         return await run_run_command(args)
-    print("Usage: stitch run <claude|codex> [options]", file=sys.stderr)
+    if args.command == "generate":
+        from runners.generate_command import run_generate_command
+
+        return await run_generate_command(args)
+    print("Usage: stitch <run|generate> <claude|codex> [options]", file=sys.stderr)
     return 1
 
 
