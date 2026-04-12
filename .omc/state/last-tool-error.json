@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"python3 << 'PYEOF'\\nimport yaml, os, re, json, subprocess\\n\\nhost = \\\"git.g24r.com\\\"\\ntoken_cfg = yaml.safe_load(open(os.path.expanduser('~/.config/glab-cli/config.yml')))\\ntoken = str(tok...",
-  "error": "Exit code 1\nTraceback (most recent call last):\n  File \"<stdin>\", line 17, in <module>\n  File \"/usr/lib/python3.13/json/__init__.py\", line 293, in load\n    return loads(fp.read(),\n        cls=cls, object_hook=object_hook,\n        parse_float=parse_float, parse_int=parse_int,\n        parse_constant=parse_constant, object_pairs_hook=object_pairs_hook, **kw)\n  File \"/usr/lib/python3.13/json/__init__.py\", line 346, in loads\n    return _default_decoder.decode(s)\n           ~~~~~~~~~~~~~~~~~~~~~~~^^^\n ...",
-  "timestamp": "2026-04-02T00:41:56.632Z",
-  "retry_count": 2
-}

@@ -1,0 +1,225 @@
+import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
+
+export const IGNORE_DIRS = new Set([
+  ".git",
+  ".venv",
+  "venv",
+  "env",
+  ".env",
+  "node_modules",
+  "__pycache__",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".tox",
+  ".nox",
+  "dist",
+  "build",
+  "target",
+  ".next",
+  ".nuxt",
+  ".svelte-kit",
+  ".turbo",
+  ".cache",
+  "coverage",
+  ".coverage",
+  "htmlcov",
+  ".idea",
+  ".vscode",
+  ".DS_Store",
+  ".stitch",
+  ".eggs",
+  "*.egg-info",
+  ".pyright",
+  ".angular",
+]);
+
+export const IGNORE_FILES = new Set([
+  ".stitch.lock",
+  ".DS_Store",
+  "Thumbs.db",
+]);
+
+export const KEEP_HIDDEN = new Set([".gitlab-ci.yml", ".github", ".gitignore"]);
+
+function isIgnoredPart(part: string): boolean {
+  if (IGNORE_DIRS.has(part)) return true;
+  if (KEEP_HIDDEN.has(part)) return false;
+  return part.startsWith(".") && part !== "." && part !== "..";
+}
+
+export function shouldIgnore(filePath: string, repoRoot: string): boolean {
+  let rel: string;
+  try {
+    rel = relative(repoRoot, filePath);
+  } catch {
+    return true;
+  }
+  const parts = rel.split("/").filter((p) => p.length > 0);
+  if (parts.length === 0) return false;
+
+  // Check directory segments (all except last)
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (isIgnoredPart(parts[i]!)) return true;
+  }
+
+  const last = parts[parts.length - 1]!;
+  if (IGNORE_FILES.has(last)) return true;
+  if (KEEP_HIDDEN.has(last)) return false;
+  return last.startsWith(".");
+}
+
+export function fileSnapshot(repoRoot: string): Map<string, [number, number]> {
+  const snap = new Map<string, [number, number]>();
+  const stack = [repoRoot];
+
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    let entries: string[];
+    try {
+      entries = readdirSync(current);
+    } catch {
+      continue;
+    }
+
+    for (const name of entries) {
+      const full = join(current, name);
+      try {
+        const st = statSync(full);
+        if (st.isDirectory()) {
+          if (isIgnoredPart(name)) continue;
+          stack.push(full);
+          continue;
+        }
+        if (!st.isFile()) continue;
+        if (IGNORE_FILES.has(name)) continue;
+        if (name.startsWith(".") && !KEEP_HIDDEN.has(name)) continue;
+        const rel = relative(repoRoot, full);
+        snap.set(rel, [st.mtimeMs, st.size]);
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return snap;
+}
+
+export interface WatchConfig {
+  debounceSeconds: number;
+  pollInterval: number;
+}
+
+const DEFAULT_WATCH_CONFIG: WatchConfig = {
+  debounceSeconds: 3.0,
+  pollInterval: 1.0,
+};
+
+function snapshotsEqual(a: Map<string, [number, number]>, b: Map<string, [number, number]>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [key, [mtime, size]] of a) {
+    const bVal = b.get(key);
+    if (!bVal || bVal[0] !== mtime || bVal[1] !== size) return false;
+  }
+  return true;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function waitForChangeThenIdle(
+  repoRoot: string,
+  config?: Partial<WatchConfig>,
+): Promise<void> {
+  const cfg = { ...DEFAULT_WATCH_CONFIG, ...config };
+  let baseline = fileSnapshot(repoRoot);
+  let current = baseline;
+
+  // Phase 1: wait for any change
+  while (snapshotsEqual(current, baseline)) {
+    await sleep(cfg.pollInterval * 1000);
+    current = fileSnapshot(repoRoot);
+  }
+
+  // Phase 2: wait for quiet
+  let lastChangeTs = performance.now();
+  while (true) {
+    await sleep(cfg.pollInterval * 1000);
+    const newSnap = fileSnapshot(repoRoot);
+    if (!snapshotsEqual(newSnap, current)) {
+      current = newSnap;
+      lastChangeTs = performance.now();
+      continue;
+    }
+    if (performance.now() - lastChangeTs >= cfg.debounceSeconds * 1000) {
+      return;
+    }
+  }
+}
+
+export class LockAcquireError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LockAcquireError";
+  }
+}
+
+export class StitchLock {
+  private path: string;
+
+  constructor(repoRoot: string) {
+    this.path = join(repoRoot, ".stitch.lock");
+  }
+
+  acquire(): void {
+    if (existsSync(this.path)) {
+      const otherPid = this.readPid();
+      if (otherPid !== null && pidAlive(otherPid)) {
+        throw new LockAcquireError(
+          `Another Stitch instance is running (pid ${otherPid}). ` +
+            `If this is wrong, delete ${this.path} manually.`,
+        );
+      }
+      try {
+        unlinkSync(this.path);
+      } catch {
+        // ignore
+      }
+    }
+    writeFileSync(this.path, String(process.pid));
+  }
+
+  release(): void {
+    try {
+      const current = this.readPid();
+      if (current === process.pid) {
+        unlinkSync(this.path);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  private readPid(): number | null {
+    try {
+      const raw = readFileSync(this.path, "utf-8").trim();
+      const pid = parseInt(raw, 10);
+      return isNaN(pid) ? null : pid;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ESRCH") return false;
+    if ((err as NodeJS.ErrnoException).code === "EPERM") return true;
+    return false;
+  }
+}

@@ -1,0 +1,230 @@
+import { buildBatchPrompt } from "../drivers/prompt.js";
+import type { AgentDriver } from "../drivers/types.js";
+import { LocalExecutor } from "./executor.js";
+import type { CIJob, ExecResult, FixContext, JobResult } from "./models.js";
+import { RunReport } from "./models.js";
+
+const ERROR_LOG_TAIL_CHARS = 4_000;
+
+export interface RunnerCallback {
+  jobStarted(name: string, attempt: number, maxAttempts: number): void;
+  jobLogUpdate(name: string, log: string): void;
+  jobFinished(name: string, result: JobResult): void;
+  driverStarted(name: string, driverName: string): void;
+  driverLogUpdate(name: string, log: string): void;
+}
+
+class NullCallback implements RunnerCallback {
+  jobStarted(_name: string, _attempt: number, _maxAttempts: number): void {}
+  jobLogUpdate(_name: string, _log: string): void {}
+  jobFinished(_name: string, _result: JobResult): void {}
+  driverStarted(_name: string, _driverName: string): void {}
+  driverLogUpdate(_name: string, _log: string): void {}
+}
+
+export interface RunnerConfig {
+  maxAttempts: number;
+  failFast: boolean;
+  jobTimeoutSeconds: number;
+}
+
+const DEFAULT_CONFIG: RunnerConfig = {
+  maxAttempts: 3,
+  failFast: false,
+  jobTimeoutSeconds: 300,
+};
+
+export class Runner {
+  private repoRoot: string;
+  private driver: AgentDriver;
+  private config: RunnerConfig;
+  private executor: LocalExecutor;
+  private cb: RunnerCallback;
+
+  constructor(
+    repoRoot: string,
+    driver: AgentDriver,
+    config?: Partial<RunnerConfig>,
+    executor?: LocalExecutor,
+    callback?: RunnerCallback,
+  ) {
+    this.repoRoot = repoRoot;
+    this.driver = driver;
+    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.executor =
+      executor ?? new LocalExecutor(repoRoot, this.config.jobTimeoutSeconds);
+    this.cb = callback ?? new NullCallback();
+  }
+
+  async run(jobs: CIJob[], dryRun = false): Promise<RunReport> {
+    const results = new Map<string, JobResult>();
+    const runnable: CIJob[] = [];
+
+    for (const job of jobs) {
+      if (job.skipReason) {
+        results.set(job.name, {
+          name: job.name,
+          status: "skipped",
+          attempts: 0,
+          driver: null,
+          errorLog: "",
+          skipReason: job.skipReason,
+        });
+      } else if (dryRun) {
+        results.set(job.name, {
+          name: job.name,
+          status: "not_run",
+          attempts: 0,
+          driver: null,
+          errorLog: "",
+          skipReason: null,
+        });
+      } else {
+        runnable.push(job);
+      }
+    }
+
+    if (runnable.length === 0) {
+      return new RunReport(
+        jobs.map((j) => results.get(j.name)!),
+        this.driver.name,
+      );
+    }
+
+    let pending = [...runnable];
+
+    for (let attempt = 1; attempt <= this.config.maxAttempts; attempt++) {
+      const execResults = await this.runJobsParallel(pending, attempt);
+
+      const failed: [CIJob, string][] = [];
+      for (const job of pending) {
+        const er = execResults.get(job.name)!;
+        if (er.exitCode === 0) {
+          const result: JobResult = {
+            name: job.name,
+            status: "passed",
+            attempts: attempt,
+            driver: null,
+            errorLog: "",
+            skipReason: null,
+          };
+          results.set(job.name, result);
+          this.cb.jobFinished(job.name, result);
+        } else {
+          failed.push([job, er.log]);
+        }
+      }
+
+      if (failed.length === 0) break;
+
+      // Last attempt: escalate
+      if (attempt >= this.config.maxAttempts) {
+        for (const [job, log] of failed) {
+          const result: JobResult = {
+            name: job.name,
+            status: "escalated",
+            attempts: attempt,
+            driver: this.driver.name,
+            errorLog: log.slice(-ERROR_LOG_TAIL_CHARS),
+            skipReason: null,
+          };
+          results.set(job.name, result);
+          this.cb.jobFinished(job.name, result);
+        }
+        break;
+      }
+
+      // Batch fix
+      const contexts: FixContext[] = failed.map(([job, log]) => ({
+        repoRoot: this.repoRoot,
+        jobName: job.name,
+        command: job.script.join(" && "),
+        script: [...job.script],
+        errorLog: log,
+        attempt,
+        promptOverride: null,
+      }));
+
+      const batchContext = this.makeBatchContext(contexts);
+      const batchLabel = failed.map(([j]) => j.name).join(", ");
+
+      this.cb.driverStarted(batchLabel, this.driver.name);
+
+      this.driver.onOutput = (log: string) => {
+        this.cb.driverLogUpdate(batchLabel, log);
+      };
+
+      const outcome = await this.driver.fix(batchContext);
+      this.driver.onOutput = null;
+
+      if (!outcome.applied) {
+        const reason = outcome.reason || "driver did not apply a fix";
+        for (const [job, log] of failed) {
+          const result: JobResult = {
+            name: job.name,
+            status: "escalated",
+            attempts: attempt,
+            driver: this.driver.name,
+            errorLog: `[driver: ${reason}]\n\n${log.slice(-ERROR_LOG_TAIL_CHARS)}`,
+            skipReason: null,
+          };
+          results.set(job.name, result);
+          this.cb.jobFinished(job.name, result);
+        }
+        break;
+      }
+
+      // Next round: only the failed jobs
+      pending = failed.map(([job]) => job);
+    }
+
+    // Preserve original order
+    const ordered = jobs.map(
+      (j) =>
+        results.get(j.name) ?? {
+          name: j.name,
+          status: "not_run" as const,
+          attempts: 0,
+          driver: null,
+          errorLog: "",
+          skipReason: null,
+        },
+    );
+
+    return new RunReport(ordered, this.driver.name);
+  }
+
+  private async runJobsParallel(
+    jobs: CIJob[],
+    attempt: number,
+  ): Promise<Map<string, ExecResult>> {
+    for (const job of jobs) {
+      this.cb.jobStarted(job.name, attempt, this.config.maxAttempts);
+    }
+
+    const pairs = await Promise.all(
+      jobs.map(async (job): Promise<[string, ExecResult]> => {
+        const result = await this.executor.runJob(job);
+        this.cb.jobLogUpdate(job.name, result.log);
+        return [job.name, result];
+      }),
+    );
+
+    return new Map(pairs);
+  }
+
+  private makeBatchContext(contexts: FixContext[]): FixContext {
+    if (contexts.length === 1) return contexts[0]!;
+
+    const prompt = buildBatchPrompt(contexts);
+    return {
+      repoRoot: contexts[0]!.repoRoot,
+      jobName: contexts.map((c) => c.jobName).join(", "),
+      command: "(batch fix)",
+      script: [],
+      errorLog: "",
+      attempt: contexts[0]!.attempt,
+      promptOverride: prompt,
+    };
+  }
+}
