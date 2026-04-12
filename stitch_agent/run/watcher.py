@@ -198,7 +198,7 @@ class StitchLock:
             other_pid = self._read_pid()
             if other_pid is not None and _pid_alive(other_pid):
                 raise LockAcquireError(
-                    f"Another stitch instance is running (pid {other_pid}). "
+                    f"Another Stitch instance is running (pid {other_pid}). "
                     f"If this is wrong, delete {self.path} manually."
                 )
             # stale lock — remove it

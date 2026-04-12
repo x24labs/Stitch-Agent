@@ -58,7 +58,7 @@ class LocalExecutor:
                     env=env,
                 )
             except Exception as exc:  # spawn failure (shell not found etc.)
-                combined_log_parts.append(f"stitch: failed to spawn: {exc}\n")
+                combined_log_parts.append(f"Stitch: failed to spawn: {exc}\n")
                 duration = time.monotonic() - start
                 return ExecResult(
                     log="".join(combined_log_parts),
@@ -77,7 +77,7 @@ class LocalExecutor:
                 with _suppress():
                     await proc.wait()
                 combined_log_parts.append(
-                    f"\nstitch: command timed out after {self.timeout_seconds}s\n"
+                    f"\nStitch: command timed out after {self.timeout_seconds}s\n"
                 )
                 duration = time.monotonic() - start
                 return ExecResult(
@@ -102,7 +102,7 @@ class LocalExecutor:
                 )
             if remaining <= 0:
                 combined_log_parts.append(
-                    f"\nstitch: overall job timeout reached ({self.timeout_seconds}s)\n"
+                    f"\nStitch: overall job timeout reached ({self.timeout_seconds}s)\n"
                 )
                 duration = time.monotonic() - start
                 return ExecResult(
