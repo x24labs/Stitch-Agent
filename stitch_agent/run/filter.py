@@ -49,6 +49,9 @@ INFRA_PATTERNS: list[str] = [
     r"backup",
     r"notify",
     r"trigger",
+    r"sync",
+    r"tag",
+    r"mirror",
     r"stitch",
 ]
 
