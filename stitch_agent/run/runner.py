@@ -168,16 +168,13 @@ class Runner:
 
             self._cb.driver_started(job.name, self.driver.name)
 
-            # Wire streaming output if the driver supports it
-            if hasattr(self.driver, "on_output"):
-                self.driver.on_output = lambda log, _name=job.name: (
-                    self._cb.driver_log_update(_name, log)
-                )
+            self.driver.on_output = lambda log, _name=job.name: (
+                self._cb.driver_log_update(_name, log)
+            )
 
             outcome = await self.driver.fix(context)
 
-            if hasattr(self.driver, "on_output"):
-                self.driver.on_output = None
+            self.driver.on_output = None
 
             if not outcome.applied:
                 reason = outcome.reason or "driver did not apply a fix"

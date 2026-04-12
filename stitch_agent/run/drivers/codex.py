@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import shutil
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
 from stitch_agent.run.drivers.base import build_prompt
 from stitch_agent.run.models import FixContext, FixOutcome
@@ -19,6 +20,7 @@ class CodexDriver:
     name: str = "codex"
     timeout_seconds: float = 600.0
     binary: str = "codex"
+    on_output: Callable[[str], None] | None = field(default=None, repr=False)
 
     async def fix(self, context: FixContext) -> FixOutcome:
         if not shutil.which(self.binary):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -19,6 +20,7 @@ class AgentDriver(Protocol):
     """
 
     name: str
+    on_output: Callable[[str], None] | None
 
     async def fix(self, context: FixContext) -> FixOutcome: ...
 
