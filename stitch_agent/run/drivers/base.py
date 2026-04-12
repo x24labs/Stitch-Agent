@@ -26,8 +26,38 @@ class AgentDriver(Protocol):
     async def fix(self, context: FixContext) -> FixOutcome: ...
 
 
+def build_batch_prompt(contexts: list[FixContext]) -> str:
+    """Build a single prompt covering multiple failing jobs at once."""
+    per_job_chars = _MAX_LOG_TAIL_CHARS // len(contexts)
+    parts: list[str] = [
+        "Multiple local CI jobs failed. Fix ALL of them so every command passes.\n\n"
+        "## Failing jobs\n\n",
+    ]
+    for i, ctx in enumerate(contexts, 1):
+        log_tail = ctx.error_log[-per_job_chars:]
+        parts.append(
+            f"### {i}. {ctx.job_name}\n"
+            f"Command: {ctx.command}\n"
+            f"```\n{log_tail}\n```\n\n"
+        )
+    parts.append(
+        "## Instructions\n"
+        "- The failures above may share a common root cause, look for that first\n"
+        "- Fix only what's needed to make ALL commands pass\n"
+        "- Do not break other passing tests\n"
+        "- If a failure requires environment changes and cannot be fixed in code, "
+        "say so explicitly\n"
+        "- When you believe all fixes are complete, stop and explain what you "
+        "changed\n\n"
+        f"Working directory: {contexts[0].repo_root}\n"
+    )
+    return "".join(parts)
+
+
 def build_prompt(context: FixContext) -> str:
     """Build the textual prompt sent to CLI-based agent drivers."""
+    if context.prompt_override is not None:
+        return context.prompt_override
     log_tail = context.error_log[-_MAX_LOG_TAIL_CHARS:]
     return (
         "A local CI job failed. Fix it so the command passes.\n\n"
