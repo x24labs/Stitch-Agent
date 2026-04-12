@@ -57,7 +57,7 @@ def _auto_commit_push(
 
     cr = commit(repo_root, report.fixed_jobs)
     if not cr.ok:
-        console.print(f"[dim]stitch: auto-commit skipped ({cr.message})[/]")
+        console.print(f"[dim]Stitch: auto-commit skipped ({cr.message})[/]")
         return
 
     console.print(
@@ -65,11 +65,11 @@ def _auto_commit_push(
     )
 
     if no_push:
-        console.print("[dim]stitch: --no-push set, skipping push[/]")
+        console.print("[dim]Stitch: --no-push set, skipping push[/]")
         return
 
     if not snap.pushable:
-        console.print("[dim]stitch: branch has unpushed commits, skipping push[/]")
+        console.print("[dim]Stitch: branch has unpushed commits, skipping push[/]")
         return
 
     pr = push(repo_root)
@@ -137,7 +137,7 @@ async def run_run_command(args: argparse.Namespace) -> int:
         if classifications is None:
             console = Console(stderr=(args.output == "json"))
             console.print(
-                "[dim]stitch: classifying jobs "
+                "[dim]Stitch: classifying jobs "
                 f"with {args.agent}...[/]"
             )
             classifications = await classify_with_llm(
@@ -145,7 +145,7 @@ async def run_run_command(args: argparse.Namespace) -> int:
             )
             if classifications:
                 save_cache(repo_root, job_names, classifications)
-                console.print("[dim]stitch: saved to .stitch/jobs.json[/]")
+                console.print("[dim]Stitch: saved to .stitch/jobs.json[/]")
 
     jobs = apply_filter(all_jobs, filter_cfg, classifications=classifications)
 
@@ -218,7 +218,7 @@ async def _run_watch_mode(
     """Watch mode with TUI. No-fix (max_attempts=1)."""
     runnable = _runnable_names(jobs)
     if not runnable:
-        print("stitch watch: nothing to run -- all jobs are skipped", file=sys.stderr)
+        print("Stitch watch: nothing to run -- all jobs are skipped", file=sys.stderr)
         return 0
 
     config = RunnerConfig(max_attempts=1, fail_fast=False)
@@ -232,7 +232,7 @@ async def _run_watch_mode(
     try:
         lock.acquire()
     except LockAcquireError as exc:
-        print(f"stitch watch: {exc}", file=sys.stderr)
+        print(f"Stitch watch: {exc}", file=sys.stderr)
         return 2
 
     cycle = 0
@@ -267,7 +267,7 @@ async def _run_watch_mode(
             print_summary(console, report)
     except KeyboardInterrupt:
         ui.stop()
-        console.print("\n[dim]stitch watch: stopped[/]")
+        console.print("\n[dim]Stitch watch: stopped[/]")
     finally:
         lock.release()
 
