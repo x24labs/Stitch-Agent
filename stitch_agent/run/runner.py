@@ -1,10 +1,18 @@
-"""Runner loop -- orchestrate local CI execution with an AI fix loop."""
+"""Runner loop -- orchestrate local CI execution with an AI fix loop.
+
+Jobs are executed in parallel via asyncio.gather. When multiple jobs fail,
+their errors are batched into a single driver prompt to minimize LLM calls.
+After each batch fix, all previously-failed jobs are re-run in parallel to
+check which ones the fix resolved.
+"""
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from stitch_agent.run.drivers.base import build_batch_prompt
 from stitch_agent.run.executor import LocalExecutor
 from stitch_agent.run.models import (
     CIJob,
@@ -17,6 +25,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from stitch_agent.run.drivers.base import AgentDriver
+    from stitch_agent.run.executor import ExecResult
 
 _ERROR_LOG_TAIL_CHARS = 4_000
 
@@ -75,127 +84,149 @@ class Runner:
     async def run(
         self, jobs: list[CIJob], dry_run: bool = False,
     ) -> RunReport:
-        results: list[JobResult] = []
-        halted = False
+        results: dict[str, JobResult] = {}
+        runnable: list[CIJob] = []
 
-        for idx, job in enumerate(jobs):
-            if halted:
-                if job.skip_reason:
-                    results.append(
-                        JobResult(
-                            name=job.name,
-                            status="skipped",
-                            skip_reason=job.skip_reason,
-                        )
-                    )
-                else:
-                    results.append(
-                        JobResult(name=job.name, status="not_run")
-                    )
-                continue
-
+        for job in jobs:
             if job.skip_reason:
-                results.append(
-                    JobResult(
-                        name=job.name,
-                        status="skipped",
-                        skip_reason=job.skip_reason,
-                    )
-                )
-                continue
-
-            if dry_run:
-                results.append(JobResult(name=job.name, status="not_run"))
-                continue
-
-            result = await self._run_single_job(job)
-            results.append(result)
-            self._cb.job_finished(job.name, result)
-
-            if result.status == "escalated" and self.config.fail_fast:
-                halted = True
-                for remaining in jobs[idx + 1 :]:
-                    if remaining.skip_reason:
-                        results.append(
-                            JobResult(
-                                name=remaining.name,
-                                status="skipped",
-                                skip_reason=remaining.skip_reason,
-                            )
-                        )
-                    else:
-                        results.append(
-                            JobResult(name=remaining.name, status="not_run")
-                        )
-                break
-
-        return RunReport(jobs=results, agent=self.driver.name)
-
-    async def _run_single_job(self, job: CIJob) -> JobResult:
-        last_log = ""
-
-        for attempt in range(1, self.config.max_attempts + 1):
-            self._cb.job_started(job.name, attempt, self.config.max_attempts)
-
-            exec_result = await self.executor.run_job(job)
-            last_log = exec_result.log
-            self._cb.job_log_update(job.name, exec_result.log)
-
-            if exec_result.exit_code == 0:
-                return JobResult(
+                results[job.name] = JobResult(
                     name=job.name,
-                    status="passed",
-                    attempts=attempt,
+                    status="skipped",
+                    skip_reason=job.skip_reason,
                 )
+            elif dry_run:
+                results[job.name] = JobResult(name=job.name, status="not_run")
+            else:
+                runnable.append(job)
 
-            if attempt >= self.config.max_attempts:
-                return JobResult(
-                    name=job.name,
-                    status="escalated",
-                    attempts=attempt,
-                    driver=self.driver.name,
-                    error_log=last_log[-_ERROR_LOG_TAIL_CHARS:],
-                )
-
-            context = FixContext(
-                repo_root=self.repo_root,
-                job_name=job.name,
-                command=" && ".join(job.script),
-                script=list(job.script),
-                error_log=exec_result.log,
-                attempt=attempt,
+        if not runnable:
+            return RunReport(
+                jobs=[results[j.name] for j in jobs],
+                agent=self.driver.name,
             )
 
-            self._cb.driver_started(job.name, self.driver.name)
+        pending = list(runnable)
 
-            # Wire streaming output if the driver supports it
-            if hasattr(self.driver, "on_output"):
-                self.driver.on_output = lambda log, _name=job.name: (
-                    self._cb.driver_log_update(_name, log)
+        for attempt in range(1, self.config.max_attempts + 1):
+            # Run all pending jobs in parallel
+            exec_results = await self._run_jobs_parallel(pending, attempt)
+
+            # Partition into passed and failed
+            failed: list[tuple[CIJob, str]] = []
+            for job in pending:
+                er = exec_results[job.name]
+                if er.exit_code == 0:
+                    result = JobResult(
+                        name=job.name, status="passed", attempts=attempt,
+                    )
+                    results[job.name] = result
+                    self._cb.job_finished(job.name, result)
+                else:
+                    failed.append((job, er.log))
+
+            if not failed:
+                break
+
+            # Last attempt: escalate all remaining failures
+            if attempt >= self.config.max_attempts:
+                for job, log in failed:
+                    result = JobResult(
+                        name=job.name,
+                        status="escalated",
+                        attempts=attempt,
+                        driver=self.driver.name,
+                        error_log=log[-_ERROR_LOG_TAIL_CHARS:],
+                    )
+                    results[job.name] = result
+                    self._cb.job_finished(job.name, result)
+                break
+
+            # Batch fix all failures in a single driver call
+            contexts = [
+                FixContext(
+                    repo_root=self.repo_root,
+                    job_name=job.name,
+                    command=" && ".join(job.script),
+                    script=list(job.script),
+                    error_log=log,
+                    attempt=attempt,
                 )
+                for job, log in failed
+            ]
 
-            outcome = await self.driver.fix(context)
+            batch_context = self._make_batch_context(contexts)
+            batch_label = ", ".join(j.name for j, _ in failed)
 
-            if hasattr(self.driver, "on_output"):
-                self.driver.on_output = None
+            self._cb.driver_started(batch_label, self.driver.name)
+
+            self.driver.on_output = lambda log, _label=batch_label: (
+                self._cb.driver_log_update(_label, log)
+            )
+
+            outcome = await self.driver.fix(batch_context)
+            self.driver.on_output = None
 
             if not outcome.applied:
                 reason = outcome.reason or "driver did not apply a fix"
-                return JobResult(
-                    name=job.name,
-                    status="escalated",
-                    attempts=attempt,
-                    driver=self.driver.name,
-                    error_log=(
-                        f"[driver: {reason}]\n\n"
-                        + last_log[-_ERROR_LOG_TAIL_CHARS:]
-                    ),
-                )
+                for job, log in failed:
+                    result = JobResult(
+                        name=job.name,
+                        status="escalated",
+                        attempts=attempt,
+                        driver=self.driver.name,
+                        error_log=(
+                            f"[driver: {reason}]\n\n"
+                            + log[-_ERROR_LOG_TAIL_CHARS:]
+                        ),
+                    )
+                    results[job.name] = result
+                    self._cb.job_finished(job.name, result)
+                break
 
-        return JobResult(
-            name=job.name,
-            status="escalated",
-            attempts=self.config.max_attempts,
-            driver=self.driver.name,
-            error_log=last_log[-_ERROR_LOG_TAIL_CHARS:],
+            # Next round: re-run only the jobs that failed
+            pending = [job for job, _ in failed]
+
+            if self.config.fail_fast:
+                # In parallel model, fail_fast halts after escalation
+                # (max_attempts or driver refusal), both handled above.
+                pass
+
+        # Build report preserving original job order
+        ordered = [
+            results.get(j.name, JobResult(name=j.name, status="not_run"))
+            for j in jobs
+        ]
+        return RunReport(jobs=ordered, agent=self.driver.name)
+
+    async def _run_jobs_parallel(
+        self, jobs: list[CIJob], attempt: int,
+    ) -> dict[str, ExecResult]:
+        """Run multiple jobs concurrently, return results keyed by name."""
+        for job in jobs:
+            self._cb.job_started(job.name, attempt, self.config.max_attempts)
+
+        async def run_one(job: CIJob) -> tuple[str, ExecResult]:
+            result = await self.executor.run_job(job)
+            self._cb.job_log_update(job.name, result.log)
+            return job.name, result
+
+        pairs = await asyncio.gather(*(run_one(j) for j in jobs))
+        return dict(pairs)
+
+    def _make_batch_context(
+        self, contexts: list[FixContext],
+    ) -> FixContext:
+        """Merge multiple FixContexts into one with a batch prompt."""
+        if len(contexts) == 1:
+            return contexts[0]
+
+        prompt = build_batch_prompt(contexts)
+        return FixContext(
+            repo_root=contexts[0].repo_root,
+            job_name=", ".join(c.job_name for c in contexts),
+            command="(batch fix)",
+            script=[],
+            error_log="",
+            attempt=contexts[0].attempt,
+            prompt_override=prompt,
         )

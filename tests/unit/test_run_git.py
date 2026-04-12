@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from typing import TYPE_CHECKING
+
+import pytest
 
 from stitch_agent.run.git import (
     GitSnapshot,
@@ -14,6 +17,8 @@ from stitch_agent.run.git import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
 
 
 def _git(args: list[str], cwd: Path) -> None:
@@ -63,9 +68,25 @@ def test_snapshot_not_pushable_dirty() -> None:
     assert snap.pushable is False
 
 
-def test_snapshot_not_pushable_no_remote() -> None:
+def test_snapshot_pushable_no_remote() -> None:
+    """No remote yet is still pushable (will push -u origin)."""
     snap = GitSnapshot(clean=True, branch="main", has_remote=False, ahead=0)
-    assert snap.pushable is False
+    assert snap.pushable is True
+
+
+def test_snapshot_committable() -> None:
+    snap = GitSnapshot(clean=True, branch="main", has_remote=False, ahead=0)
+    assert snap.committable is True
+
+
+def test_snapshot_not_committable_dirty() -> None:
+    snap = GitSnapshot(clean=False, branch="main", has_remote=False, ahead=0)
+    assert snap.committable is False
+
+
+def test_snapshot_not_committable_detached() -> None:
+    snap = GitSnapshot(clean=True, branch=None, has_remote=False, ahead=0)
+    assert snap.committable is False
 
 
 def test_snapshot_not_pushable_ahead() -> None:
@@ -76,6 +97,7 @@ def test_snapshot_not_pushable_ahead() -> None:
 # --- snapshot() ---
 
 
+@needs_git
 def test_snapshot_clean_with_remote(tmp_path: Path) -> None:
     repo, _ = _init_repo_with_remote(tmp_path)
     snap = snapshot(repo)
@@ -85,6 +107,7 @@ def test_snapshot_clean_with_remote(tmp_path: Path) -> None:
     assert snap.ahead == 0
 
 
+@needs_git
 def test_snapshot_dirty_working_tree(tmp_path: Path) -> None:
     repo, _ = _init_repo_with_remote(tmp_path)
     (repo / "file.txt").write_text("changed")
@@ -92,6 +115,7 @@ def test_snapshot_dirty_working_tree(tmp_path: Path) -> None:
     assert snap.clean is False
 
 
+@needs_git
 def test_snapshot_no_remote_tracking(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     snap = snapshot(repo)
@@ -99,6 +123,7 @@ def test_snapshot_no_remote_tracking(tmp_path: Path) -> None:
     assert snap.has_remote is False
 
 
+@needs_git
 def test_snapshot_ahead_of_remote(tmp_path: Path) -> None:
     repo, _ = _init_repo_with_remote(tmp_path)
     (repo / "file.txt").write_text("change1")
@@ -111,6 +136,7 @@ def test_snapshot_ahead_of_remote(tmp_path: Path) -> None:
     assert snap.ahead == 2
 
 
+@needs_git
 def test_snapshot_detached_head(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     sha = subprocess.run(
@@ -126,6 +152,7 @@ def test_snapshot_detached_head(tmp_path: Path) -> None:
 # --- commit() ---
 
 
+@needs_git
 def test_commit_modified_file(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     (repo / "file.txt").write_text("fixed")
@@ -135,12 +162,14 @@ def test_commit_modified_file(tmp_path: Path) -> None:
     assert len(cr.sha) == 40
 
 
+@needs_git
 def test_commit_no_changes(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     cr = commit(repo, ["lint"])
     assert cr.ok is False
 
 
+@needs_git
 def test_commit_multiple_jobs(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     (repo / "file.txt").write_text("fixed")
@@ -152,6 +181,7 @@ def test_commit_multiple_jobs(tmp_path: Path) -> None:
 # --- push() ---
 
 
+@needs_git
 def test_push_success(tmp_path: Path) -> None:
     repo, _ = _init_repo_with_remote(tmp_path)
     (repo / "file.txt").write_text("fixed")
@@ -161,6 +191,36 @@ def test_push_success(tmp_path: Path) -> None:
     assert pr.ok is True
 
 
+@needs_git
+def test_push_sets_upstream(tmp_path: Path) -> None:
+    """Push to a repo with a remote but no upstream configured."""
+    bare = tmp_path / "bare.git"
+    bare.mkdir()
+    _git(["init", "--bare", "-b", "main"], bare)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(["init", "-b", "main"], repo)
+    _git(["config", "user.email", "test@test.com"], repo)
+    _git(["config", "user.name", "Test"], repo)
+    _git(["remote", "add", "origin", str(bare)], repo)
+    (repo / "file.txt").write_text("hello")
+    _git(["add", "file.txt"], repo)
+    _git(["commit", "-m", "initial"], repo)
+
+    pr = push(repo)
+    assert pr.ok is True
+
+    # Verify upstream was set
+    upstream = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "@{u}"], cwd=str(repo),
+        capture_output=True, text=True, check=False,
+    )
+    assert upstream.returncode == 0
+    assert "origin/main" in upstream.stdout.strip()
+
+
+@needs_git
 def test_push_diverged(tmp_path: Path) -> None:
     repo, bare = _init_repo_with_remote(tmp_path)
 

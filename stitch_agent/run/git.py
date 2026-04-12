@@ -21,9 +21,14 @@ class GitSnapshot:
     ahead: int
 
     @property
+    def committable(self) -> bool:
+        """True when working tree was clean and we're on a named branch."""
+        return self.clean and self.branch is not None
+
+    @property
     def pushable(self) -> bool:
-        """True when branch is clean, tracked, and not ahead."""
-        return self.clean and self.has_remote and self.ahead == 0
+        """True when committable and not ahead of remote (or no remote yet)."""
+        return self.committable and not (self.has_remote and self.ahead > 0)
 
 
 @dataclass
@@ -97,8 +102,23 @@ def commit(repo_root: Path, fixed_jobs: list[str]) -> CommitResult:
 
 
 def push(repo_root: Path) -> PushResult:
-    """Push to tracking remote. Fast-forward only, never --force."""
-    result = _run(["git", "push"], repo_root)
+    """Push to tracking remote. Fast-forward only, never --force.
+
+    If no upstream is configured, sets it with ``git push -u origin <branch>``.
+    """
+    # Check if upstream exists
+    upstream = _run(["git", "rev-parse", "--abbrev-ref", "@{u}"], repo_root)
+    if upstream.returncode != 0:
+        # No upstream: set it with -u
+        branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], repo_root)
+        if branch.returncode != 0:
+            return PushResult(ok=False, error="cannot determine current branch")
+        result = _run(
+            ["git", "push", "-u", "origin", branch.stdout.strip()], repo_root,
+        )
+    else:
+        result = _run(["git", "push"], repo_root)
+
     if result.returncode != 0:
         return PushResult(ok=False, error=result.stderr.strip())
     return PushResult(ok=True)

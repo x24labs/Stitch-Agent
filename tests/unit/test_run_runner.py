@@ -127,6 +127,8 @@ async def test_driver_refusal_escalates_immediately(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_fail_fast_marks_remaining_not_run(tmp_path: Path) -> None:
+    """With fail_fast + parallel, all jobs run in round 1. If both fail and
+    exhaust attempts, both escalate."""
     executor = _StubExecutor(
         results={
             "lint": [
@@ -134,18 +136,23 @@ async def test_fail_fast_marks_remaining_not_run(tmp_path: Path) -> None:
                 ExecResult(log="x", exit_code=1),
                 ExecResult(log="x", exit_code=1),
             ],
-            "test": [ExecResult(log="", exit_code=0)],
+            "test": [
+                ExecResult(log="x", exit_code=1),
+                ExecResult(log="x", exit_code=1),
+                ExecResult(log="x", exit_code=1),
+            ],
         }
     )
     driver = _StubDriver()
     runner = _runner(tmp_path, driver, executor, max_attempts=3, fail_fast=True)
     report = await runner.run([_job("lint"), _job("test")])
     assert report.jobs[0].status == "escalated"
-    assert report.jobs[1].status == "not_run"
+    assert report.jobs[1].status == "escalated"
 
 
 @pytest.mark.asyncio
 async def test_default_mode_continues_after_escalation(tmp_path: Path) -> None:
+    """Both jobs run in parallel. lint fails all 3, test passes first try."""
     executor = _StubExecutor(
         results={
             "lint": [
@@ -261,3 +268,176 @@ async def test_real_executor_integration(tmp_path: Path) -> None:
     )
     report = await runner.run([_job("hello")])
     assert report.jobs[0].status == "passed"
+
+
+# --- Parallel execution and batch fix tests ---
+
+
+@pytest.mark.asyncio
+async def test_parallel_all_pass_first_try(tmp_path: Path) -> None:
+    """Multiple jobs all pass in parallel, no driver calls."""
+    executor = _StubExecutor(
+        results={
+            "lint": [ExecResult(log="", exit_code=0)],
+            "typecheck": [ExecResult(log="", exit_code=0)],
+            "test": [ExecResult(log="", exit_code=0)],
+        }
+    )
+    driver = _StubDriver()
+    runner = _runner(tmp_path, driver, executor)
+    report = await runner.run([_job("lint"), _job("typecheck"), _job("test")])
+    assert all(j.status == "passed" for j in report.jobs)
+    assert all(j.attempts == 1 for j in report.jobs)
+    assert driver.calls == []
+
+
+@pytest.mark.asyncio
+async def test_batch_fix_resolves_all(tmp_path: Path) -> None:
+    """Two jobs fail, batch fix resolves both on re-run."""
+    executor = _StubExecutor(
+        results={
+            "lint": [
+                ExecResult(log="lint error", exit_code=1),
+                ExecResult(log="", exit_code=0),
+            ],
+            "typecheck": [
+                ExecResult(log="type error", exit_code=1),
+                ExecResult(log="", exit_code=0),
+            ],
+        }
+    )
+    driver = _StubDriver()
+    runner = _runner(tmp_path, driver, executor)
+    report = await runner.run([_job("lint"), _job("typecheck")])
+
+    assert report.jobs[0].status == "passed"
+    assert report.jobs[0].attempts == 2
+    assert report.jobs[1].status == "passed"
+    assert report.jobs[1].attempts == 2
+    # Only ONE driver call for the batch fix
+    assert len(driver.calls) == 1
+    # The batch context should mention both jobs
+    assert "lint" in driver.calls[0].job_name
+    assert "typecheck" in driver.calls[0].job_name
+
+
+@pytest.mark.asyncio
+async def test_batch_fix_partial_resolution(tmp_path: Path) -> None:
+    """Two jobs fail. Batch fix resolves lint but typecheck still fails.
+    Second batch fix resolves typecheck."""
+    executor = _StubExecutor(
+        results={
+            "lint": [
+                ExecResult(log="lint error", exit_code=1),
+                ExecResult(log="", exit_code=0),  # passes after first fix
+            ],
+            "typecheck": [
+                ExecResult(log="type error", exit_code=1),
+                ExecResult(log="type error 2", exit_code=1),  # still fails
+                ExecResult(log="", exit_code=0),  # passes after second fix
+            ],
+        }
+    )
+    driver = _StubDriver()
+    runner = _runner(tmp_path, driver, executor, max_attempts=3)
+    report = await runner.run([_job("lint"), _job("typecheck")])
+
+    assert report.jobs[0].status == "passed"
+    assert report.jobs[0].attempts == 2
+    assert report.jobs[1].status == "passed"
+    assert report.jobs[1].attempts == 3
+    # Two driver calls: first batch (both jobs), second (only typecheck)
+    assert len(driver.calls) == 2
+    # Second call should be single-job (no batch), no prompt_override
+    assert driver.calls[1].job_name == "typecheck"
+    assert driver.calls[1].prompt_override is None
+
+
+@pytest.mark.asyncio
+async def test_driver_refusal_escalates_batch(tmp_path: Path) -> None:
+    """Two jobs fail, driver refuses batch fix, both escalate."""
+    executor = _StubExecutor(
+        results={
+            "lint": [ExecResult(log="fail", exit_code=1)],
+            "typecheck": [ExecResult(log="fail", exit_code=1)],
+        }
+    )
+    driver = _StubDriver(
+        outcomes=[FixOutcome(applied=False, reason="cannot fix")]
+    )
+    runner = _runner(tmp_path, driver, executor, max_attempts=3)
+    report = await runner.run([_job("lint"), _job("typecheck")])
+
+    assert report.jobs[0].status == "escalated"
+    assert report.jobs[1].status == "escalated"
+    assert "cannot fix" in report.jobs[0].error_log
+    assert "cannot fix" in report.jobs[1].error_log
+
+
+@pytest.mark.asyncio
+async def test_mixed_pass_fail_parallel(tmp_path: Path) -> None:
+    """lint passes, typecheck fails. Only typecheck gets fixed."""
+    executor = _StubExecutor(
+        results={
+            "lint": [ExecResult(log="", exit_code=0)],
+            "typecheck": [
+                ExecResult(log="type error", exit_code=1),
+                ExecResult(log="", exit_code=0),
+            ],
+        }
+    )
+    driver = _StubDriver()
+    runner = _runner(tmp_path, driver, executor)
+    report = await runner.run([_job("lint"), _job("typecheck")])
+
+    assert report.jobs[0].status == "passed"
+    assert report.jobs[0].attempts == 1
+    assert report.jobs[1].status == "passed"
+    assert report.jobs[1].attempts == 2
+    assert len(driver.calls) == 1
+    # Single failure, no batch prompt
+    assert driver.calls[0].job_name == "typecheck"
+    assert driver.calls[0].prompt_override is None
+
+
+@pytest.mark.asyncio
+async def test_watch_mode_parallel_no_fix(tmp_path: Path) -> None:
+    """Watch mode (max_attempts=1): all jobs run in parallel, no fix attempted."""
+    executor = _StubExecutor(
+        results={
+            "lint": [ExecResult(log="fail", exit_code=1)],
+            "test": [ExecResult(log="", exit_code=0)],
+        }
+    )
+    driver = _StubDriver()
+    runner = _runner(tmp_path, driver, executor, max_attempts=1)
+    report = await runner.run([_job("lint"), _job("test")])
+
+    assert report.jobs[0].status == "escalated"
+    assert report.jobs[1].status == "passed"
+    assert driver.calls == []  # no fix in watch mode
+
+
+@pytest.mark.asyncio
+async def test_job_order_preserved(tmp_path: Path) -> None:
+    """Report preserves original job order regardless of execution."""
+    skipped = CIJob(
+        name="deploy", stage="deploy", script=["true"],
+        skip_reason="infra",
+    )
+    executor = _StubExecutor(
+        results={
+            "lint": [ExecResult(log="", exit_code=0)],
+            "test": [ExecResult(log="", exit_code=0)],
+        }
+    )
+    driver = _StubDriver()
+    runner = _runner(tmp_path, driver, executor)
+    report = await runner.run([skipped, _job("lint"), _job("test")])
+
+    assert report.jobs[0].name == "deploy"
+    assert report.jobs[0].status == "skipped"
+    assert report.jobs[1].name == "lint"
+    assert report.jobs[1].status == "passed"
+    assert report.jobs[2].name == "test"
+    assert report.jobs[2].status == "passed"

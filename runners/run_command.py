@@ -11,13 +11,20 @@ from typing import TYPE_CHECKING
 
 from rich.console import Console
 
+from stitch_agent.run.ci_detect import detect_platform
 from stitch_agent.run.ci_parser import CIParseError, parse_ci_config
 from stitch_agent.run.drivers import (
     AgentDriver,
     ClaudeCodeDriver,
     CodexDriver,
 )
-from stitch_agent.run.filter import FilterConfig, apply_filter
+from stitch_agent.run.filter import (
+    FilterConfig,
+    apply_filter,
+    classify_with_llm,
+    load_cache,
+    save_cache,
+)
 from stitch_agent.run.git import GitSnapshot, commit, push, snapshot
 from stitch_agent.run.runner import Runner, RunnerConfig
 from stitch_agent.run.ui import RunUI, print_summary
@@ -45,12 +52,12 @@ def _auto_commit_push(
     no_push: bool,
 ) -> None:
     """Commit and optionally push fix changes when conditions are met."""
-    if not snap.pushable or report.overall_status != "passed" or not report.fixed_jobs:
+    if not snap.committable or report.overall_status != "passed" or not report.fixed_jobs:
         return
 
     cr = commit(repo_root, report.fixed_jobs)
     if not cr.ok:
-        console.print(f"[dim]stitch: auto-commit skipped ({cr.message})[/]")
+        console.print(f"[dim]Stitch: auto-commit skipped ({cr.message})[/]")
         return
 
     console.print(
@@ -58,7 +65,11 @@ def _auto_commit_push(
     )
 
     if no_push:
-        console.print("[dim]stitch: --no-push set, skipping push[/]")
+        console.print("[dim]Stitch: --no-push set, skipping push[/]")
+        return
+
+    if not snap.pushable:
+        console.print("[dim]Stitch: branch has unpushed commits, skipping push[/]")
         return
 
     pr = push(repo_root)
@@ -98,8 +109,10 @@ async def run_run_command(args: argparse.Namespace) -> int:
         print(f"Error: repo path not found: {repo_root}", file=sys.stderr)
         return 2
 
+    platform = detect_platform(repo_root)
+
     try:
-        all_jobs = parse_ci_config(repo_root)
+        all_jobs = parse_ci_config(repo_root, platform=platform)
     except CIParseError as exc:
         print(f"Error parsing CI config: {exc}", file=sys.stderr)
         return 2
@@ -113,10 +126,28 @@ async def run_run_command(args: argparse.Namespace) -> int:
         return 0
 
     filter_cfg = FilterConfig()
+    classifications: dict[str, str] | None = None
+
     if args.jobs:
         filter_cfg.only = [j.strip() for j in args.jobs.split(",") if j.strip()]
+    else:
+        # LLM-based classification with cache
+        job_names = [j.name for j in all_jobs]
+        classifications = load_cache(repo_root, job_names)
+        if classifications is None:
+            console = Console(stderr=(args.output == "json"))
+            console.print(
+                "[dim]Stitch: classifying jobs "
+                f"with {args.agent}...[/]"
+            )
+            classifications = await classify_with_llm(
+                job_names, agent=args.agent, repo_root=repo_root,
+            )
+            if classifications:
+                save_cache(repo_root, job_names, classifications)
+                console.print("[dim]Stitch: saved to .stitch/jobs.json[/]")
 
-    jobs = apply_filter(all_jobs, filter_cfg)
+    jobs = apply_filter(all_jobs, filter_cfg, classifications=classifications)
 
     if args.agent not in _VALID_AGENTS:
         print(
@@ -187,7 +218,7 @@ async def _run_watch_mode(
     """Watch mode with TUI. No-fix (max_attempts=1)."""
     runnable = _runnable_names(jobs)
     if not runnable:
-        print("stitch watch: nothing to run -- all jobs are skipped", file=sys.stderr)
+        print("Stitch watch: nothing to run -- all jobs are skipped", file=sys.stderr)
         return 0
 
     config = RunnerConfig(max_attempts=1, fail_fast=False)
@@ -201,7 +232,7 @@ async def _run_watch_mode(
     try:
         lock.acquire()
     except LockAcquireError as exc:
-        print(f"stitch watch: {exc}", file=sys.stderr)
+        print(f"Stitch watch: {exc}", file=sys.stderr)
         return 2
 
     cycle = 0
@@ -236,7 +267,7 @@ async def _run_watch_mode(
             print_summary(console, report)
     except KeyboardInterrupt:
         ui.stop()
-        console.print("\n[dim]stitch watch: stopped[/]")
+        console.print("\n[dim]Stitch watch: stopped[/]")
     finally:
         lock.release()
 

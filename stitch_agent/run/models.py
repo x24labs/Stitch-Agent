@@ -33,6 +33,7 @@ class FixContext:
     script: list[str]
     error_log: str
     attempt: int
+    prompt_override: str | None = None
 
 
 @dataclass
