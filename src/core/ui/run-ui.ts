@@ -285,7 +285,8 @@ function buildJobRow(j: JobState, spinnerFrame: string): StyledText {
   const chunks: ReturnType<typeof bold>[] = [
     ...statusChunks,
     isSkip ? dim(pad(j.name, 24)) : bold(pad(j.name, 24)),
-    isSkip ? dim(pad(j.stage, 16)) : { __isChunk: true as const, text: pad(j.stage, 16) },
+    isSkip ? dim(pad(j.stage, 18)) : { __isChunk: true as const, text: pad(j.stage, 18) },
+    { __isChunk: true as const, text: "  " },
     isSkip ? dim(info) : { __isChunk: true as const, text: info },
   ];
 
@@ -569,7 +570,8 @@ function updateRunView(
     new StyledText([
       fg(cBlue)(bold(pad("STATUS", 8))),
       fg(cBlue)(bold(pad("JOB", 24))),
-      fg(cBlue)(bold(pad("STAGE", 16))),
+      fg(cBlue)(bold(pad("STAGE", 18))),
+      { __isChunk: true as const, text: "  " },
       fg(cBlue)(bold("INFO")),
     ]),
   );
