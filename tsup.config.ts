@@ -12,7 +12,7 @@ export default defineConfig({
   shims: true,
   banner: ({ format }) => {
     if (format === "esm") {
-      return { js: "#!/usr/bin/env node" };
+      return { js: "#!/usr/bin/env bun" };
     }
     return {};
   },

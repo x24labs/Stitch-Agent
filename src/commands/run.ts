@@ -7,7 +7,6 @@ import { commit, push, snapshot } from "../core/git.js";
 import type { CIJob, GitSnapshot } from "../core/models.js";
 import { type RunReport, isCommittable, isPushable } from "../core/models.js";
 import { Runner, type RunnerConfig } from "../core/runner.js";
-import { StitchUI } from "../core/ui/run-ui.js";
 import {
   LockAcquireError,
   StitchLock,
@@ -179,21 +178,12 @@ export async function runRunCommand(opts: RunOptions): Promise<number> {
     return runHeadless(opts, repoRoot, driver);
   }
 
-  // ── TUI mode: welcome screen shows while we parse ──────
-  const ui = new StitchUI(opts.agent, repoRoot);
-  ui.start();
-
-  // Step 0: Detect
-  ui.setLoading("Detecting CI platform...", 0);
+  // ── Pre-TUI checks (before loading OpenTUI) ──────────────
   const platform = detectPlatform(repoRoot);
-
-  // Step 1: Parse
-  ui.setLoading("Parsing CI configuration...", 1);
   let allJobs: CIJob[];
   try {
     allJobs = parseCIConfig(repoRoot, platform);
   } catch (err) {
-    ui.stop();
     if (err instanceof CIParseError) {
       console.error(`Error parsing CI config: ${err.message}`);
       return 2;
@@ -202,10 +192,15 @@ export async function runRunCommand(opts: RunOptions): Promise<number> {
   }
 
   if (allJobs.length === 0) {
-    ui.stop();
     console.log("No CI configuration found (.gitlab-ci.yml or .github/workflows/)");
     return 0;
   }
+
+  // ── TUI mode: jobs found, launch UI ──────────────────────
+  // Lazy import: @opentui/core uses bun:ffi, only load when TUI is needed
+  const { StitchUI } = await import("../core/ui/run-ui.js");
+  const ui = new StitchUI(opts.agent, repoRoot);
+  await ui.start();
 
   // Step 2: Classify
   let classifications: Record<string, string> | null = null;
@@ -298,6 +293,7 @@ async function runWatchMode(
   }
 
   const config: Partial<RunnerConfig> = { maxAttempts: 1, failFast: false };
+  const { StitchUI } = await import("../core/ui/run-ui.js");
   const ui = new StitchUI(opts.agent, repoRoot);
   const watchCfg: Partial<WatchConfig> = { debounceSeconds: opts.debounce };
 
@@ -312,7 +308,7 @@ async function runWatchMode(
     throw err;
   }
 
-  ui.start();
+  await ui.start();
 
   try {
     const runOnce = async () => {
