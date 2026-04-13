@@ -406,7 +406,14 @@ function renderFrame(tuiState: TuiState, agent: string, repo: string, spinner: S
     lines.push(
       `  ${fg(purple, spinner.frame)} ${boldFg(purple, state.fixing.label)}  ${dimText("fixing with")} ${boldFg(blue, state.fixing.driver)}`,
     );
-    const logLines = state.fixing.log.trim().split("\n").slice(-12);
+    const logLines = state.fixing.log
+      .trim()
+      .split("\n")
+      .filter(
+        (l) =>
+          !l.includes("\u2192") && !l.includes("STITCH -") && !l.includes("\u2500\u2500\u2500"),
+      )
+      .slice(-12);
     for (const l of logLines) {
       const lo = l.toLowerCase();
       const c = ["error", "fail", "assert", "exception"].some((k) => lo.includes(k))
@@ -587,7 +594,7 @@ export class StitchUI {
       },
       driverLogUpdate: (n, l) => {
         this.tuiState.driverLogUpdate(n, l);
-        this.renderer.repaint();
+        // No repaint here - the 200ms render loop handles it
       },
     };
   }

@@ -1,47 +1,52 @@
 // Flicker-free terminal renderer
-// Uses cursor home + overwrite instead of clear + write
+// First paint: console.clear(). Subsequent paints: cursor home + overwrite + pad.
 
 export class Renderer {
   private timer: ReturnType<typeof setInterval> | null = null;
   private renderFn: (() => string) | null = null;
   private started = false;
+  private firstPaint = true;
   private lastLineCount = 0;
   private cols = 80;
 
   enter(): void {
     this.started = true;
+    this.firstPaint = true;
     this.cols = process.stdout.columns || 80;
-    // Clear screen once at start, hide cursor
-    process.stdout.write("\x1b[2J\x1b[H\x1b[?25l");
+    process.stderr.write("\x1b[?25l"); // hide cursor
   }
 
   exit(): void {
     if (this.started) {
       this.started = false;
-      // Show cursor, clear screen
-      process.stdout.write("\x1b[?25h\x1b[2J\x1b[H");
+      process.stderr.write("\x1b[?25h"); // show cursor
+      console.clear();
     }
   }
 
   paint(content: string): void {
     if (!this.started) return;
 
+    if (this.firstPaint) {
+      console.clear();
+      this.firstPaint = false;
+    }
+
     // Pad each line to terminal width to overwrite previous content
     const lines = content.split("\n");
     const padded = lines.map((l) => {
-      // Strip ANSI codes to get visible length
       const visible = l.replace(/\x1b\[[0-9;]*m/g, "").length;
       const needed = Math.max(0, this.cols - visible);
       return l + " ".repeat(needed);
     });
 
-    // Blank lines to clear any leftover from previous longer frame
+    // Blank lines to clear leftover from previous longer frame
     while (padded.length < this.lastLineCount) {
       padded.push(" ".repeat(this.cols));
     }
     this.lastLineCount = lines.length;
 
-    // Cursor home + write everything in one call (no flicker)
+    // Cursor home + write in one call
     process.stdout.write(`\x1b[H${padded.join("\n")}`);
   }
 
