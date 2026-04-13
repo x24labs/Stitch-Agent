@@ -29,7 +29,7 @@
   "keywords": ["ci", "local-ci", "ai", "claude-code", "devex", "lint", "test", "automation"],
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "bun": ">=1.0.0"
   },
   "dependencies": {
     "@opentui/core": "^0.1.98",
