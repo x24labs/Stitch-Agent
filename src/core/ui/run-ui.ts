@@ -401,19 +401,21 @@ function renderFrame(tuiState: TuiState, agent: string, repo: string, spinner: S
   lines.push(`  ${line(w)}`);
 
   // ── Driver panel
-  if (state.fixing?.log) {
+  // Driver log: fixed 14 lines (2 header + 12 log) to prevent frame height changes
+  if (state.fixing) {
+    const LOG_ROWS = 12;
     lines.push("");
     lines.push(
       `  ${fg(purple, spinner.frame)} ${boldFg(purple, state.fixing.label)}  ${dimText("fixing with")} ${boldFg(blue, state.fixing.driver)}`,
     );
-    const logLines = state.fixing.log
+    const logLines = (state.fixing.log || "")
       .trim()
       .split("\n")
       .filter(
         (l) =>
           !l.includes("\u2192") && !l.includes("STITCH -") && !l.includes("\u2500\u2500\u2500"),
       )
-      .slice(-12);
+      .slice(-LOG_ROWS);
     for (const l of logLines) {
       const lo = l.toLowerCase();
       const c = ["error", "fail", "assert", "exception"].some((k) => lo.includes(k))
@@ -423,6 +425,8 @@ function renderFrame(tuiState: TuiState, agent: string, repo: string, spinner: S
           : "";
       lines.push(`    ${c ? fg(c, l) : dimText(l)}`);
     }
+    // Pad to fixed height
+    for (let i = logLines.length; i < LOG_ROWS; i++) lines.push("");
   }
 
   // ── Failed errors

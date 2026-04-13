@@ -1,53 +1,40 @@
-// Flicker-free terminal renderer
-// First paint: console.clear(). Subsequent paints: cursor home + overwrite + pad.
+// Terminal renderer - uses ANSI save/restore cursor position
+// Save cursor before frame, restore before next frame, overwrite in place
 
 export class Renderer {
   private timer: ReturnType<typeof setInterval> | null = null;
   private renderFn: (() => string) | null = null;
   private started = false;
-  private firstPaint = true;
-  private lastLineCount = 0;
   private cols = 80;
 
   enter(): void {
     this.started = true;
-    this.firstPaint = true;
     this.cols = process.stdout.columns || 80;
-    process.stderr.write("\x1b[?25l"); // hide cursor
+    // Clear screen, move to top, hide cursor, save position
+    process.stdout.write("\x1b[2J\x1b[H\x1b[?25l\x1b7");
   }
 
   exit(): void {
     if (this.started) {
       this.started = false;
-      process.stderr.write("\x1b[?25h"); // show cursor
-      console.clear();
+      process.stdout.write("\x1b[?25h");
     }
   }
 
   paint(content: string): void {
     if (!this.started) return;
 
-    if (this.firstPaint) {
-      console.clear();
-      this.firstPaint = false;
-    }
+    // Restore saved cursor position (top of screen), then save again
+    process.stdout.write("\x1b8\x1b7");
 
-    // Pad each line to terminal width to overwrite previous content
     const lines = content.split("\n");
-    const padded = lines.map((l) => {
+    const out: string[] = [];
+    for (const l of lines) {
       const visible = l.replace(/\x1b\[[0-9;]*m/g, "").length;
-      const needed = Math.max(0, this.cols - visible);
-      return l + " ".repeat(needed);
-    });
-
-    // Blank lines to clear leftover from previous longer frame
-    while (padded.length < this.lastLineCount) {
-      padded.push(" ".repeat(this.cols));
+      // \x1b[2K clears the line, \r moves to column 0, then write content
+      out.push(`\x1b[2K${l}${" ".repeat(Math.max(0, this.cols - visible))}`);
     }
-    this.lastLineCount = lines.length;
-
-    // Cursor home + write in one call
-    process.stdout.write(`\x1b[H${padded.join("\n")}`);
+    process.stdout.write(out.join("\n"));
   }
 
   startLoop(renderFn: () => string, intervalMs = 200): void {
