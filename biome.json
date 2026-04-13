@@ -10,8 +10,12 @@
       "complexity": {
         "noExcessiveCognitiveComplexity": "warn"
       },
+      "style": {
+        "noNonNullAssertion": "warn"
+      },
       "suspicious": {
-        "noExplicitAny": "warn"
+        "noExplicitAny": "warn",
+        "noControlCharactersInRegex": "warn"
       }
     }
   },

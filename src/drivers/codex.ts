@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { which } from "../util.js";
 import type { FixContext, FixOutcome } from "../core/models.js";
+import { which } from "../util.js";
 import { buildPrompt } from "./prompt.js";
 import type { AgentDriver } from "./types.js";
 

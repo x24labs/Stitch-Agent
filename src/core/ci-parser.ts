@@ -1,8 +1,8 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import yaml from "js-yaml";
-import type { CIJob } from "./models.js";
 import type { CIPlatform } from "./ci-detect.js";
+import type { CIJob } from "./models.js";
 
 export class CIParseError extends Error {
   constructor(message: string) {
@@ -153,7 +153,7 @@ function parseGitlabCI(path: string): CIJob[] {
     };
 
     if (!byStage.has(stage)) byStage.set(stage, []);
-    byStage.get(stage)!.push(job);
+    byStage.get(stage)?.push(job);
   }
 
   // Order by stage

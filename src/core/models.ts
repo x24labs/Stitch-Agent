@@ -79,9 +79,7 @@ export class RunReport {
   }
 
   get fixedJobs(): string[] {
-    return this.jobs
-      .filter((j) => j.status === "passed" && j.attempts > 1)
-      .map((j) => j.name);
+    return this.jobs.filter((j) => j.status === "passed" && j.attempts > 1).map((j) => j.name);
   }
 
   get overallStatus(): "passed" | "failed" {

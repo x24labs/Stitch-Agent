@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { which } from "../util.js";
 import type { FixContext, FixOutcome } from "../core/models.js";
+import { which } from "../util.js";
 import { buildPrompt } from "./prompt.js";
 import type { AgentDriver } from "./types.js";
 
@@ -24,7 +24,15 @@ export class ClaudeCodeDriver implements AgentDriver {
     return new Promise((resolve) => {
       const proc = spawn(
         this.binary,
-        ["-p", prompt, "--permission-mode", "acceptEdits", "--output-format", "stream-json", "--verbose"],
+        [
+          "-p",
+          prompt,
+          "--permission-mode",
+          "acceptEdits",
+          "--output-format",
+          "stream-json",
+          "--verbose",
+        ],
         { cwd: context.repoRoot, stdio: ["ignore", "pipe", "pipe"] },
       );
 
@@ -64,7 +72,8 @@ export class ClaudeCodeDriver implements AgentDriver {
             activity.push(`> ${event.content}`);
             this.emit(activity);
           } else if (event.kind === "tool_result") {
-            const preview = event.content.length > 200 ? `${event.content.slice(0, 200)}...` : event.content;
+            const preview =
+              event.content.length > 200 ? `${event.content.slice(0, 200)}...` : event.content;
             activity.push(`  ${preview}`);
             this.emit(activity);
           } else if (event.kind === "result") {

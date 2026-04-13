@@ -1,6 +1,6 @@
 import { Command } from "commander";
-import { runRunCommand } from "./commands/run.js";
 import { runGenerateCommand } from "./commands/generate.js";
+import { runRunCommand } from "./commands/run.js";
 
 const program = new Command();
 
@@ -19,14 +19,19 @@ program
     return val;
   })
   .option("--repo <path>", "Repository root path", ".")
-  .option("--max-attempts <n>", "Maximum fix attempts per job", (v) => parseInt(v, 10), 3)
+  .option("--max-attempts <n>", "Maximum fix attempts per job", (v) => Number.parseInt(v, 10), 3)
   .option("--output <format>", "Output format", "text")
   .option("--dry-run", "List runnable jobs without executing them", false)
   .option("--fail-fast", "Stop after the first escalated job", false)
   .option("--jobs <list>", "Comma-separated allowlist of job names to run")
   .option("--no-push", "Commit fixes locally but skip pushing to remote")
   .option("--watch", "Watch mode: re-run on file changes, no fixes", false)
-  .option("--debounce <seconds>", "Seconds of quiet before re-running in watch mode", (v) => parseFloat(v), 3.0)
+  .option(
+    "--debounce <seconds>",
+    "Seconds of quiet before re-running in watch mode",
+    (v) => Number.parseFloat(v),
+    3.0,
+  )
   .action(async (agent, opts) => {
     const code = await runRunCommand({ agent, ...opts });
     process.exit(code);

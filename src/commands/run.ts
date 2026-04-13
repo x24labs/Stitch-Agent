@@ -1,14 +1,19 @@
-import { resolve } from "node:path";
 import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { detectPlatform } from "../core/ci-detect.js";
 import { CIParseError, parseCIConfig } from "../core/ci-parser.js";
 import { applyFilter, classifyWithLLM, loadCache, saveCache } from "../core/filter.js";
 import { commit, push, snapshot } from "../core/git.js";
 import type { CIJob, GitSnapshot } from "../core/models.js";
-import { RunReport, isCommittable, isPushable } from "../core/models.js";
+import { type RunReport, isCommittable, isPushable } from "../core/models.js";
 import { Runner, type RunnerConfig } from "../core/runner.js";
-import { LockAcquireError, StitchLock, WatchConfig, waitForChangeThenIdle } from "../core/watcher.js";
 import { StitchUI } from "../core/ui/run-ui.js";
+import {
+  LockAcquireError,
+  StitchLock,
+  type WatchConfig,
+  waitForChangeThenIdle,
+} from "../core/watcher.js";
 import { ClaudeCodeDriver } from "../drivers/claude-code.js";
 import { CodexDriver } from "../drivers/codex.js";
 import type { AgentDriver } from "../drivers/types.js";
@@ -61,7 +66,11 @@ function autoCommitPush(
   return { sha: cr.sha, pushed };
 }
 
-async function runHeadless(opts: RunOptions, repoRoot: string, driver: AgentDriver): Promise<number> {
+async function runHeadless(
+  opts: RunOptions,
+  repoRoot: string,
+  driver: AgentDriver,
+): Promise<number> {
   const platform = detectPlatform(repoRoot);
   let allJobs: CIJob[];
   try {
@@ -86,7 +95,12 @@ async function runHeadless(opts: RunOptions, repoRoot: string, driver: AgentDriv
 
   let classifications: Record<string, string> | null = null;
   const filterCfg = {
-    only: opts.jobs ? opts.jobs.split(",").map((j) => j.trim()).filter(Boolean) : null,
+    only: opts.jobs
+      ? opts.jobs
+          .split(",")
+          .map((j) => j.trim())
+          .filter(Boolean)
+      : null,
   };
 
   if (!filterCfg.only) {
@@ -196,7 +210,12 @@ export async function runRunCommand(opts: RunOptions): Promise<number> {
   // Step 2: Classify
   let classifications: Record<string, string> | null = null;
   const filterCfg = {
-    only: opts.jobs ? opts.jobs.split(",").map((j) => j.trim()).filter(Boolean) : null,
+    only: opts.jobs
+      ? opts.jobs
+          .split(",")
+          .map((j) => j.trim())
+          .filter(Boolean)
+      : null,
   };
 
   if (!filterCfg.only) {

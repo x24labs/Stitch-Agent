@@ -1,6 +1,6 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   LockAcquireError,
@@ -96,7 +96,7 @@ describe("fileSnapshot", () => {
     const entry2 = snap2.get("file.txt");
     expect(entry2).toBeDefined();
     // Size should differ
-    expect(entry2![1]).not.toBe(entry1![1]);
+    expect(entry2?.[1]).not.toBe(entry1?.[1]);
   });
 });
 

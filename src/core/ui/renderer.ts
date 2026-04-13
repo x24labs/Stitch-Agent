@@ -42,7 +42,7 @@ export class Renderer {
     this.lastLineCount = lines.length;
 
     // Cursor home + write everything in one call (no flicker)
-    process.stdout.write("\x1b[H" + padded.join("\n"));
+    process.stdout.write(`\x1b[H${padded.join("\n")}`);
   }
 
   startLoop(renderFn: () => string, intervalMs = 200): void {

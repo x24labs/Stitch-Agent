@@ -14,9 +14,7 @@
       "types": "./dist/index.d.ts"
     }
   },
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -28,16 +26,7 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build"
   },
-  "keywords": [
-    "ci",
-    "local-ci",
-    "ai",
-    "claude-code",
-    "devex",
-    "lint",
-    "test",
-    "automation"
-  ],
+  "keywords": ["ci", "local-ci", "ai", "claude-code", "devex", "lint", "test", "automation"],
   "license": "MIT",
   "engines": {
     "node": ">=20"

@@ -235,7 +235,10 @@ function hasTestJobs(repoRoot: string, platform: string): boolean {
       const data = yaml.load(readFileSync(ciFile, "utf-8"));
       if (typeof data !== "object" || data === null) return false;
       for (const key of Object.keys(data as Record<string, unknown>)) {
-        if (typeof key === "string" && [...TEST_JOB_PATTERNS].some((p) => key.toLowerCase().includes(p))) {
+        if (
+          typeof key === "string" &&
+          [...TEST_JOB_PATTERNS].some((p) => key.toLowerCase().includes(p))
+        ) {
           return true;
         }
       }

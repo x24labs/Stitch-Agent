@@ -17,14 +17,7 @@ export function buildBatchPrompt(contexts: FixContext[]): string {
   }
 
   parts.push(
-    "## Instructions\n" +
-      "- The failures above may share a common root cause, look for that first\n" +
-      "- Fix only what's needed to make ALL commands pass\n" +
-      "- Do not break other passing tests\n" +
-      "- If a failure requires environment changes and cannot be fixed in code, " +
-      "say so explicitly\n" +
-      "- When you believe all fixes are complete, stop and explain what you changed\n\n" +
-      `Working directory: ${contexts[0]!.repoRoot}\n`,
+    `## Instructions\n- The failures above may share a common root cause, look for that first\n- Fix only what's needed to make ALL commands pass\n- Do not break other passing tests\n- If a failure requires environment changes and cannot be fixed in code, say so explicitly\n- When you believe all fixes are complete, stop and explain what you changed\n\nWorking directory: ${contexts[0]?.repoRoot}\n`,
   );
 
   return parts.join("");
@@ -36,24 +29,5 @@ export function buildPrompt(context: FixContext): string {
   }
 
   const logTail = context.errorLog.slice(-MAX_LOG_TAIL_CHARS);
-  return (
-    "A local CI job failed. Fix it so the command passes.\n\n" +
-    "## Job\n" +
-    `Name: ${context.jobName}\n` +
-    `Command: ${context.command}\n` +
-    `Attempt: ${context.attempt}\n\n` +
-    "## Error output\n" +
-    "```\n" +
-    `${logTail}\n` +
-    "```\n\n" +
-    "## Instructions\n" +
-    "- Investigate by reading the relevant files\n" +
-    "- Fix only what's needed to make the command pass\n" +
-    "- Do not break other passing tests\n" +
-    "- If this failure requires environment changes (missing system " +
-    "package, external service) and cannot be fixed in code, say so " +
-    "explicitly and do not modify code\n" +
-    "- When you believe the fix is complete, stop and explain what you changed\n\n" +
-    `Working directory: ${context.repoRoot}\n`
-  );
+  return `A local CI job failed. Fix it so the command passes.\n\n## Job\nName: ${context.jobName}\nCommand: ${context.command}\nAttempt: ${context.attempt}\n\n## Error output\n\`\`\`\n${logTail}\n\`\`\`\n\n## Instructions\n- Investigate by reading the relevant files\n- Fix only what's needed to make the command pass\n- Do not break other passing tests\n- If this failure requires environment changes (missing system package, external service) and cannot be fixed in code, say so explicitly and do not modify code\n- When you believe the fix is complete, stop and explain what you changed\n\nWorking directory: ${context.repoRoot}\n`;
 }

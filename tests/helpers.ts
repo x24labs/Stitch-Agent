@@ -9,9 +9,7 @@ export class StubExecutor {
     const count = (this.calls.get(job.name) ?? 0) + 1;
     this.calls.set(job.name, count);
     const queue = this.results.get(job.name) ?? [];
-    return (
-      queue.shift() ?? { log: "", exitCode: 0, timedOut: false, durationSeconds: 0 }
-    );
+    return queue.shift() ?? { log: "", exitCode: 0, timedOut: false, durationSeconds: 0 };
   }
 }
 
@@ -23,9 +21,7 @@ export class StubDriver implements AgentDriver {
 
   async fix(context: FixContext): Promise<FixOutcome> {
     this.calls.push(context);
-    return (
-      this.outcomes.shift() ?? { applied: true, reason: "stub fix applied", driverLog: "" }
-    );
+    return this.outcomes.shift() ?? { applied: true, reason: "stub fix applied", driverLog: "" };
   }
 }
 

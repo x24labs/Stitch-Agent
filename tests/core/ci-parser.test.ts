@@ -1,6 +1,6 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CIParseError, parseCIConfig } from "../../src/core/ci-parser.js";
 
@@ -38,10 +38,10 @@ lint:
       );
       const jobs = parseCIConfig(tmp);
       expect(jobs).toHaveLength(2);
-      expect(jobs[0]!.name).toBe("build:wheel");
-      expect(jobs[0]!.stage).toBe("build");
-      expect(jobs[1]!.name).toBe("lint");
-      expect(jobs[1]!.stage).toBe("test");
+      expect(jobs[0]?.name).toBe("build:wheel");
+      expect(jobs[0]?.stage).toBe("build");
+      expect(jobs[1]?.name).toBe("lint");
+      expect(jobs[1]?.stage).toBe("test");
     });
 
     it("ignores reserved keys", () => {
@@ -62,7 +62,7 @@ lint:
       );
       const jobs = parseCIConfig(tmp);
       expect(jobs).toHaveLength(1);
-      expect(jobs[0]!.name).toBe("lint");
+      expect(jobs[0]?.name).toBe("lint");
     });
 
     it("ignores hidden templates", () => {
@@ -79,7 +79,7 @@ test:
       );
       const jobs = parseCIConfig(tmp);
       expect(jobs).toHaveLength(1);
-      expect(jobs[0]!.name).toBe("test");
+      expect(jobs[0]?.name).toBe("test");
     });
 
     it("inherits top-level image", () => {
@@ -93,7 +93,7 @@ test:
 `,
       );
       const jobs = parseCIConfig(tmp);
-      expect(jobs[0]!.image).toBe("python:3.12");
+      expect(jobs[0]?.image).toBe("python:3.12");
     });
 
     it("job image overrides top-level", () => {
@@ -108,7 +108,7 @@ test:
 `,
       );
       const jobs = parseCIConfig(tmp);
-      expect(jobs[0]!.image).toBe("node:20");
+      expect(jobs[0]?.image).toBe("node:20");
     });
 
     it("inherits default image", () => {
@@ -123,7 +123,7 @@ test:
 `,
       );
       const jobs = parseCIConfig(tmp);
-      expect(jobs[0]!.image).toBe("python:3.12");
+      expect(jobs[0]?.image).toBe("python:3.12");
     });
 
     it("merges top-level before_script", () => {
@@ -138,7 +138,7 @@ test:
 `,
       );
       const jobs = parseCIConfig(tmp);
-      expect(jobs[0]!.script).toEqual(["echo setup", "echo test"]);
+      expect(jobs[0]?.script).toEqual(["echo setup", "echo test"]);
     });
 
     it("job before_script overrides global", () => {
@@ -155,7 +155,7 @@ test:
 `,
       );
       const jobs = parseCIConfig(tmp);
-      expect(jobs[0]!.script).toEqual(["echo local", "echo test"]);
+      expect(jobs[0]?.script).toEqual(["echo local", "echo test"]);
     });
 
     it("skips jobs without script key", () => {
@@ -171,7 +171,7 @@ test:
       );
       const jobs = parseCIConfig(tmp);
       expect(jobs).toHaveLength(1);
-      expect(jobs[0]!.name).toBe("test");
+      expect(jobs[0]?.name).toBe("test");
     });
 
     it("uses default stage test when none specified", () => {
@@ -184,7 +184,7 @@ lint:
 `,
       );
       const jobs = parseCIConfig(tmp);
-      expect(jobs[0]!.stage).toBe("test");
+      expect(jobs[0]?.stage).toBe("test");
     });
 
     it("handles image as object with name", () => {
@@ -200,7 +200,7 @@ test:
 `,
       );
       const jobs = parseCIConfig(tmp);
-      expect(jobs[0]!.image).toBe("python:3.12");
+      expect(jobs[0]?.image).toBe("python:3.12");
     });
   });
 
@@ -223,8 +223,8 @@ jobs:
       );
       const jobs = parseCIConfig(tmp);
       expect(jobs).toHaveLength(1);
-      expect(jobs[0]!.name).toBe("test");
-      expect(jobs[0]!.script).toEqual(["npm install", "npm test"]);
+      expect(jobs[0]?.name).toBe("test");
+      expect(jobs[0]?.script).toEqual(["npm install", "npm test"]);
     });
 
     it("skips jobs with only uses steps", () => {
@@ -262,7 +262,7 @@ jobs:
 `,
       );
       const jobs = parseCIConfig(tmp);
-      expect(jobs[0]!.image).toBe("node:20");
+      expect(jobs[0]?.image).toBe("node:20");
     });
 
     it("extracts container image from object", () => {
@@ -282,7 +282,7 @@ jobs:
 `,
       );
       const jobs = parseCIConfig(tmp);
-      expect(jobs[0]!.image).toBe("node:20");
+      expect(jobs[0]?.image).toBe("node:20");
     });
   });
 
@@ -296,7 +296,7 @@ jobs:
       );
       const jobs = parseCIConfig(tmp, "gitlab");
       expect(jobs).toHaveLength(1);
-      expect(jobs[0]!.script).toEqual(["echo gl"]);
+      expect(jobs[0]?.script).toEqual(["echo gl"]);
     });
 
     it("only parses github when platform=github", () => {
@@ -308,7 +308,7 @@ jobs:
       );
       const jobs = parseCIConfig(tmp, "github");
       expect(jobs).toHaveLength(1);
-      expect(jobs[0]!.script).toEqual(["echo gh"]);
+      expect(jobs[0]?.script).toEqual(["echo gh"]);
     });
   });
 

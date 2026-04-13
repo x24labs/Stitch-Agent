@@ -51,8 +51,7 @@ export class Runner {
     this.repoRoot = repoRoot;
     this.driver = driver;
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.executor =
-      executor ?? new LocalExecutor(repoRoot, this.config.jobTimeoutSeconds);
+    this.executor = executor ?? new LocalExecutor(repoRoot, this.config.jobTimeoutSeconds);
     this.cb = callback ?? new NullCallback();
   }
 
@@ -194,10 +193,7 @@ export class Runner {
     return new RunReport(ordered, this.driver.name);
   }
 
-  private async runJobsParallel(
-    jobs: CIJob[],
-    attempt: number,
-  ): Promise<Map<string, ExecResult>> {
+  private async runJobsParallel(jobs: CIJob[], attempt: number): Promise<Map<string, ExecResult>> {
     for (const job of jobs) {
       this.cb.jobStarted(job.name, attempt, this.config.maxAttempts);
     }
@@ -216,14 +212,15 @@ export class Runner {
   private makeBatchContext(contexts: FixContext[]): FixContext {
     if (contexts.length === 1) return contexts[0]!;
 
+    const first = contexts[0]!;
     const prompt = buildBatchPrompt(contexts);
     return {
-      repoRoot: contexts[0]!.repoRoot,
+      repoRoot: first.repoRoot,
       jobName: contexts.map((c) => c.jobName).join(", "),
       command: "(batch fix)",
       script: [],
       errorLog: "",
-      attempt: contexts[0]!.attempt,
+      attempt: first.attempt,
       promptOverride: prompt,
     };
   }
