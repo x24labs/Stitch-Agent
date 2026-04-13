@@ -11,14 +11,14 @@ describe("detectPlatform", () => {
     tmp = join(tmpdir(), `stitch-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(tmp, { recursive: true });
     // Clean env
-    process.env.GITLAB_CI = undefined;
-    process.env.GITHUB_ACTIONS = undefined;
+    delete process.env.GITLAB_CI;
+    delete process.env.GITHUB_ACTIONS;
   });
 
   afterEach(() => {
     rmSync(tmp, { recursive: true, force: true });
-    process.env.GITLAB_CI = undefined;
-    process.env.GITHUB_ACTIONS = undefined;
+    delete process.env.GITLAB_CI;
+    delete process.env.GITHUB_ACTIONS;
   });
 
   it("detects GitLab from env var", () => {

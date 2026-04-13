@@ -25,7 +25,8 @@ describe("git snapshot", () => {
   beforeEach(() => {
     tmp = join(tmpdir(), `stitch-git-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(tmp, { recursive: true });
-    git("init -b main", tmp);
+    git("init", tmp);
+    git("checkout -b main", tmp);
     git("config user.email test@test.com", tmp);
     git("config user.name test", tmp);
     writeFileSync(join(tmp, "file.txt"), "initial");
@@ -68,7 +69,8 @@ describe("git commit", () => {
   beforeEach(() => {
     tmp = join(tmpdir(), `stitch-git-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(tmp, { recursive: true });
-    git("init -b main", tmp);
+    git("init", tmp);
+    git("checkout -b main", tmp);
     git("config user.email test@test.com", tmp);
     git("config user.name test", tmp);
     writeFileSync(join(tmp, "file.txt"), "initial");
