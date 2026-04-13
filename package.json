@@ -26,7 +26,27 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build"
   },
-  "keywords": ["ci", "local-ci", "ai", "claude-code", "devex", "lint", "test", "automation"],
+  "keywords": [
+    "ci",
+    "local-ci",
+    "ai-agent",
+    "claude-code",
+    "devex",
+    "lint",
+    "test",
+    "automation",
+    "self-healing-ci",
+    "gitlab-ci",
+    "github-actions",
+    "ai",
+    "llm",
+    "stitch-agent"
+  ],
+  "homepage": "https://stitch-agent.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/x24labs/stitch"
+  },
   "license": "MIT",
   "engines": {
     "node": ">=20"

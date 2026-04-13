@@ -1,18 +1,55 @@
-# Stitch
+<p align="center">
+  <img src="assets/stitch-logo.png" alt="Stitch" width="160" />
+</p>
 
-**Run your CI jobs locally. Fix failures with AI.**
+<h1 align="center">Stitch</h1>
 
-Stitch parses your CI configuration (GitLab CI, GitHub Actions), runs the jobs locally, and when something fails, delegates to an AI agent to fix it. Feedback in seconds, not minutes. No API keys, no config files.
+<p align="center">
+  <strong>Run your CI locally. Fix failures with AI.</strong>
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/stitch-agent"><img src="https://img.shields.io/npm/v/stitch-agent?color=blue&label=npm" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/stitch-agent"><img src="https://img.shields.io/node/v/stitch-agent" alt="node version" /></a>
+  <a href="https://github.com/x24labs/stitch/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="license" /></a>
+</p>
+
+---
+
+Stitch parses your CI configuration (GitLab CI, GitHub Actions), runs the jobs on your machine, and when something fails, hands the error to an AI agent that fixes it. Feedback in seconds, not minutes. No API keys, no config files.
+
+```
+                                                         +*+++++++++-         .+%
+                                                      .=+---=====+++++:       ::
+                         .                          .=+---------.  :-:=++++-:+==--:.
+                      :+*++=                       =+-------*%%%#++**#=====-+*+:....
+                      .=+++++=                   +*+=-----#%%%%%%%%%%%%     =-
+                         =++++++:              +***++++++*%%%%%%%%%%%%     -*:
+                           =++++++-         .=****++++++++%%%%%%%%%%#.    -#-
+                             .=+++++:.   .:+****++++++++++%%%%%%%%%%#.   .+-
+                               .=++++++:-=+***+++++++++++*%%%%%%%%%%#.  .==
+                                 .-+=---+**++++++++++++*%%%%%%%%%%%%%.  :*
+                                     :+*++++++++++++*#%%%%%%%%%%%%%%:  .#
+                                    ++++++++++*###%%%%%%%%%%%%%%%%=    #
+                                  =*+==+#######%%%%%%%%%%%%%%%%%*:    #
+                                ::      .*#%%%%%%%%%%%%%%%%%%%#-     +
+                                           :===%%%%%%%%%*====-      -
+                                             ..   :..
+                                                .    ..
+```
 
 ## Quick start
 
 ```bash
-pip install stitch-agent
+npx stitch-agent run claude --dry-run   # see what would run
+npx stitch-agent run claude             # run + fix failures
+```
 
-cd your-repo
+Or install globally:
 
-stitch run claude --dry-run       # see what would run
-stitch run claude                 # run + fix failures
+```bash
+npm install -g stitch-agent
+stitch run claude
 ```
 
 ## How it works
@@ -26,9 +63,9 @@ stitch run claude
   |
   |- job passes? next job
   |- job fails?
-  |    |- spawns `claude -p` with the error log
-  |    |- Claude Code investigates and edits files
-  |    |- re-runs the job to verify
+  |    |- spawns the AI agent CLI with the error log
+  |    |- agent investigates and edits files
+  |    |- re-runs the job to verify the fix
   |    |- repeat up to --max-attempts
   |
   |- reports results with a live TUI
@@ -52,7 +89,7 @@ Other tools fix CI failures with AI. None of them work like Stitch.
 
 **Dagger** can run locally, but you rewrite your pipelines in their SDK. It does not read your existing `.gitlab-ci.yml` or GitHub Actions workflows.
 
-**Stitch** takes the CI config you already have, runs it on your machine in seconds, and hands failures to whichever AI agent CLI you prefer. No vendor lock-in, no rewrite, no waiting for remote runners. Just `stitch run claude` and move on.
+**Stitch** takes the CI config you already have, runs it on your machine in seconds, and hands failures to whichever AI agent CLI you prefer. No vendor lock-in, no rewrite, no waiting for remote runners.
 
 ## Claude Code skill (recommended)
 
@@ -75,8 +112,8 @@ stitch run codex                           # use OpenAI Codex CLI instead
 ```
 
 Agents:
-- `claude` -- Claude Code CLI. Uses your Claude subscription.
-- `codex` -- OpenAI Codex CLI. Uses your ChatGPT subscription.
+- `claude` - Claude Code CLI. Uses your Claude subscription.
+- `codex` - OpenAI Codex CLI. Uses your ChatGPT subscription.
 
 ## Watch mode
 
@@ -98,10 +135,6 @@ stitch run claude --jobs lint,test,typecheck
 ```
 
 Prefix matching: `--jobs test` matches `test`, `test:unit`, `test-e2e`, `test_fast`.
-
-## Dependencies
-
-Just two: `pyyaml` and `rich`. No API clients, no cloud SDKs.
 
 ## License
 
