@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RunReport, isCommittable, isPushable } from "../../src/core/models.js";
-import type { JobResult, GitSnapshot } from "../../src/core/models.js";
+import type { GitSnapshot, JobResult } from "../../src/core/models.js";
 
 function result(overrides: Partial<JobResult> = {}): JobResult {
   return {
@@ -60,9 +60,7 @@ describe("RunReport", () => {
     });
 
     it("returns empty array when no jobs were fixed", () => {
-      const report = new RunReport([
-        result({ name: "lint", status: "passed", attempts: 1 }),
-      ]);
+      const report = new RunReport([result({ name: "lint", status: "passed", attempts: 1 })]);
       expect(report.fixedJobs).toEqual([]);
     });
   });
@@ -90,9 +88,9 @@ describe("RunReport", () => {
       expect(d.overall_status).toBe("passed");
       expect(Array.isArray(d.jobs)).toBe(true);
       const jobs = d.jobs as Record<string, unknown>[];
-      expect(jobs[0]!.name).toBe("lint");
-      expect(jobs[0]!.skip_reason).toBeNull();
-      expect(jobs[0]!.error_log).toBe("");
+      expect(jobs[0]?.name).toBe("lint");
+      expect(jobs[0]?.skip_reason).toBeNull();
+      expect(jobs[0]?.error_log).toBe("");
     });
   });
 });

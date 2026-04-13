@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { CodexDriver } from "../../src/drivers/codex.js";
 import type { FixContext } from "../../src/core/models.js";
+import { CodexDriver } from "../../src/drivers/codex.js";
 
 function ctx(overrides: Partial<FixContext> = {}): FixContext {
   return {

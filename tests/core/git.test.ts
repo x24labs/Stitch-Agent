@@ -1,12 +1,22 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { commit, snapshot } from "../../src/core/git.js";
 
 function git(args: string, cwd: string) {
-  execSync(`git ${args}`, { cwd, stdio: "ignore", env: { ...process.env, GIT_AUTHOR_NAME: "test", GIT_AUTHOR_EMAIL: "test@test.com", GIT_COMMITTER_NAME: "test", GIT_COMMITTER_EMAIL: "test@test.com" } });
+  execSync(`git ${args}`, {
+    cwd,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "test",
+      GIT_AUTHOR_EMAIL: "test@test.com",
+      GIT_COMMITTER_NAME: "test",
+      GIT_COMMITTER_EMAIL: "test@test.com",
+    },
+  });
 }
 
 describe("git snapshot", () => {
@@ -15,7 +25,8 @@ describe("git snapshot", () => {
   beforeEach(() => {
     tmp = join(tmpdir(), `stitch-git-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(tmp, { recursive: true });
-    git("init -b main", tmp);
+    git("init", tmp);
+    git("checkout -b main", tmp);
     git("config user.email test@test.com", tmp);
     git("config user.name test", tmp);
     writeFileSync(join(tmp, "file.txt"), "initial");
@@ -58,7 +69,8 @@ describe("git commit", () => {
   beforeEach(() => {
     tmp = join(tmpdir(), `stitch-git-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(tmp, { recursive: true });
-    git("init -b main", tmp);
+    git("init", tmp);
+    git("checkout -b main", tmp);
     git("config user.email test@test.com", tmp);
     git("config user.name test", tmp);
     writeFileSync(join(tmp, "file.txt"), "initial");

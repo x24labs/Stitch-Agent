@@ -1,48 +1,40 @@
-// Flicker-free terminal renderer
-// Uses cursor home + overwrite instead of clear + write
+// Terminal renderer - uses ANSI save/restore cursor position
+// Save cursor before frame, restore before next frame, overwrite in place
 
 export class Renderer {
   private timer: ReturnType<typeof setInterval> | null = null;
   private renderFn: (() => string) | null = null;
   private started = false;
-  private lastLineCount = 0;
   private cols = 80;
 
   enter(): void {
     this.started = true;
     this.cols = process.stdout.columns || 80;
-    // Clear screen once at start, hide cursor
-    process.stdout.write("\x1b[2J\x1b[H\x1b[?25l");
+    // Clear screen, move to top, hide cursor, save position
+    process.stdout.write("\x1b[2J\x1b[H\x1b[?25l\x1b7");
   }
 
   exit(): void {
     if (this.started) {
       this.started = false;
-      // Show cursor, clear screen
-      process.stdout.write("\x1b[?25h\x1b[2J\x1b[H");
+      process.stdout.write("\x1b[?25h");
     }
   }
 
   paint(content: string): void {
     if (!this.started) return;
 
-    // Pad each line to terminal width to overwrite previous content
+    // Restore saved cursor position (top of screen), then save again
+    process.stdout.write("\x1b8\x1b7");
+
     const lines = content.split("\n");
-    const padded = lines.map((l) => {
-      // Strip ANSI codes to get visible length
+    const out: string[] = [];
+    for (const l of lines) {
       const visible = l.replace(/\x1b\[[0-9;]*m/g, "").length;
-      const needed = Math.max(0, this.cols - visible);
-      return l + " ".repeat(needed);
-    });
-
-    // Blank lines to clear any leftover from previous longer frame
-    while (padded.length < this.lastLineCount) {
-      padded.push(" ".repeat(this.cols));
+      // \x1b[2K clears the line, \r moves to column 0, then write content
+      out.push(`\x1b[2K${l}${" ".repeat(Math.max(0, this.cols - visible))}`);
     }
-    this.lastLineCount = lines.length;
-
-    // Cursor home + write everything in one call (no flicker)
-    process.stdout.write("\x1b[H" + padded.join("\n"));
+    process.stdout.write(out.join("\n"));
   }
 
   startLoop(renderFn: () => string, intervalMs = 200): void {

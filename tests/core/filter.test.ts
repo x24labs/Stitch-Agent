@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { applyFilter, loadCache, saveCache } from "../../src/core/filter.js";
 import type { CIJob } from "../../src/core/models.js";
@@ -56,8 +56,8 @@ describe("applyFilter", () => {
   it("skips infra jobs when classifications provided", () => {
     const jobs = [job("lint"), job("deploy")];
     const result = applyFilter(jobs, { only: null }, { lint: "verify", deploy: "infra" });
-    expect(result[0]!.skipReason).toBeNull();
-    expect(result[1]!.skipReason).toContain("infrastructure");
+    expect(result[0]?.skipReason).toBeNull();
+    expect(result[1]?.skipReason).toContain("infrastructure");
   });
 
   it("runs all jobs when no filter and no classifications", () => {
@@ -69,42 +69,38 @@ describe("applyFilter", () => {
   it("filters by exact match allowlist", () => {
     const jobs = [job("lint"), job("test"), job("deploy")];
     const result = applyFilter(jobs, { only: ["lint"] });
-    expect(result[0]!.skipReason).toBeNull();
-    expect(result[1]!.skipReason).toContain("allowlist");
-    expect(result[2]!.skipReason).toContain("allowlist");
+    expect(result[0]?.skipReason).toBeNull();
+    expect(result[1]?.skipReason).toContain("allowlist");
+    expect(result[2]?.skipReason).toContain("allowlist");
   });
 
   it("filters by prefix match with separators", () => {
     const jobs = [job("test:unit"), job("test:e2e"), job("lint")];
     const result = applyFilter(jobs, { only: ["test"] });
-    expect(result[0]!.skipReason).toBeNull();
-    expect(result[1]!.skipReason).toBeNull();
-    expect(result[2]!.skipReason).toContain("allowlist");
+    expect(result[0]?.skipReason).toBeNull();
+    expect(result[1]?.skipReason).toBeNull();
+    expect(result[2]?.skipReason).toContain("allowlist");
   });
 
   it("prefix match requires separator", () => {
     const jobs = [job("testing"), job("test")];
     const result = applyFilter(jobs, { only: ["test"] });
     // "testing" does NOT match "test" prefix (no separator after)
-    expect(result[0]!.skipReason).toContain("allowlist");
-    expect(result[1]!.skipReason).toBeNull();
+    expect(result[0]?.skipReason).toContain("allowlist");
+    expect(result[1]?.skipReason).toBeNull();
   });
 
   it("allowlist takes precedence over classifications", () => {
     const jobs = [job("lint"), job("deploy")];
-    const result = applyFilter(
-      jobs,
-      { only: ["deploy"] },
-      { lint: "verify", deploy: "infra" },
-    );
+    const result = applyFilter(jobs, { only: ["deploy"] }, { lint: "verify", deploy: "infra" });
     // When allowlist is set, classifications are ignored
-    expect(result[0]!.skipReason).toContain("allowlist");
-    expect(result[1]!.skipReason).toBeNull();
+    expect(result[0]?.skipReason).toContain("allowlist");
+    expect(result[1]?.skipReason).toBeNull();
   });
 
   it("defaults to verify for unknown jobs in classification", () => {
     const jobs = [job("mystery")];
     const result = applyFilter(jobs, { only: null }, { other: "infra" });
-    expect(result[0]!.skipReason).toBeNull();
+    expect(result[0]?.skipReason).toBeNull();
   });
 });

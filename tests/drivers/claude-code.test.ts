@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ClaudeCodeDriver } from "../../src/drivers/claude-code.js";
 import type { FixContext } from "../../src/core/models.js";
+import { ClaudeCodeDriver } from "../../src/drivers/claude-code.js";
 
 function ctx(overrides: Partial<FixContext> = {}): FixContext {
   return {

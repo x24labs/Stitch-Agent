@@ -1,14 +1,19 @@
-import { resolve } from "node:path";
 import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { detectPlatform } from "../core/ci-detect.js";
 import { CIParseError, parseCIConfig } from "../core/ci-parser.js";
 import { applyFilter, classifyWithLLM, loadCache, saveCache } from "../core/filter.js";
 import { commit, push, snapshot } from "../core/git.js";
 import type { CIJob, GitSnapshot } from "../core/models.js";
-import { RunReport, isCommittable, isPushable } from "../core/models.js";
+import { type RunReport, isCommittable, isPushable } from "../core/models.js";
 import { Runner, type RunnerConfig } from "../core/runner.js";
-import { LockAcquireError, StitchLock, WatchConfig, waitForChangeThenIdle } from "../core/watcher.js";
 import { StitchUI } from "../core/ui/run-ui.js";
+import {
+  LockAcquireError,
+  StitchLock,
+  type WatchConfig,
+  waitForChangeThenIdle,
+} from "../core/watcher.js";
 import { ClaudeCodeDriver } from "../drivers/claude-code.js";
 import { CodexDriver } from "../drivers/codex.js";
 import type { AgentDriver } from "../drivers/types.js";
@@ -61,28 +66,12 @@ function autoCommitPush(
   return { sha: cr.sha, pushed };
 }
 
-function printDryRun(jobs: CIJob[]): void {
-  const runnable = jobs.filter((j) => !j.skipReason);
-  const skipped = jobs.filter((j) => j.skipReason);
-  console.log(`stitch run: dry-run ${runnable.length} runnable, ${skipped.length} skipped`);
-  for (const j of runnable) {
-    const cmd = j.script.join(" && ").slice(0, 80);
-    console.log(`  \u25b6 [${j.stage}] ${j.name}: ${cmd}`);
-  }
-  for (const j of skipped) {
-    console.log(`  \u23ed [${j.stage}] ${j.name} -- ${j.skipReason}`);
-  }
-}
-
-export async function runRunCommand(opts: RunOptions): Promise<number> {
-  const repoRoot = resolve(opts.repo);
-  if (!existsSync(repoRoot)) {
-    console.error(`Error: repo path not found: ${repoRoot}`);
-    return 2;
-  }
-
+async function runHeadless(
+  opts: RunOptions,
+  repoRoot: string,
+  driver: AgentDriver,
+): Promise<number> {
   const platform = detectPlatform(repoRoot);
-
   let allJobs: CIJob[];
   try {
     allJobs = parseCIConfig(repoRoot, platform);
@@ -104,35 +93,79 @@ export async function runRunCommand(opts: RunOptions): Promise<number> {
     return 0;
   }
 
-  // Filter
   let classifications: Record<string, string> | null = null;
   const filterCfg = {
-    only: opts.jobs ? opts.jobs.split(",").map((j) => j.trim()).filter(Boolean) : null,
+    only: opts.jobs
+      ? opts.jobs
+          .split(",")
+          .map((j) => j.trim())
+          .filter(Boolean)
+      : null,
   };
 
   if (!filterCfg.only) {
     const jobNames = allJobs.map((j) => j.name);
     classifications = loadCache(repoRoot, jobNames);
     if (!classifications) {
-      console.log(`Stitch: classifying jobs with ${opts.agent}...`);
+      console.log(`STITCH: classifying jobs with ${opts.agent}...`);
       classifications = await classifyWithLLM(jobNames, opts.agent, repoRoot);
       if (classifications) {
         saveCache(repoRoot, jobNames, classifications);
-        console.log("Stitch: saved to .stitch/jobs.json");
       }
     }
   }
 
-  let jobs = applyFilter(allJobs, filterCfg, classifications);
-
-  if (!VALID_AGENTS.includes(opts.agent)) {
-    console.error(`Unknown agent: ${opts.agent}. Valid: ${VALID_AGENTS.join(", ")}`);
-    return 2;
-  }
+  const jobs = applyFilter(allJobs, filterCfg, classifications);
 
   if (opts.dryRun) {
     printDryRun(jobs);
     return 0;
+  }
+
+  const config: Partial<RunnerConfig> = {
+    maxAttempts: opts.maxAttempts,
+    failFast: opts.failFast,
+  };
+
+  if (opts.output === "json") {
+    const snap = snapshot(repoRoot);
+    const runner = new Runner(repoRoot, driver, config);
+    const report = await runner.run(jobs);
+    console.log(JSON.stringify(report.toDict(), null, 2));
+    autoCommitPush(repoRoot, snap, report, !opts.push);
+    return report.exitCode();
+  }
+
+  if (opts.watch) {
+    return runWatchMode(repoRoot, driver, jobs, opts);
+  }
+
+  return 0;
+}
+
+function printDryRun(jobs: CIJob[]): void {
+  const runnable = jobs.filter((j) => !j.skipReason);
+  const skipped = jobs.filter((j) => j.skipReason);
+  console.log(`stitch run: dry-run ${runnable.length} runnable, ${skipped.length} skipped`);
+  for (const j of runnable) {
+    const cmd = j.script.join(" && ").slice(0, 80);
+    console.log(`  \u25b6 [${j.stage}] ${j.name}: ${cmd}`);
+  }
+  for (const j of skipped) {
+    console.log(`  \u23ed [${j.stage}] ${j.name} -- ${j.skipReason}`);
+  }
+}
+
+export async function runRunCommand(opts: RunOptions): Promise<number> {
+  const repoRoot = resolve(opts.repo);
+  if (!existsSync(repoRoot)) {
+    console.error(`Error: repo path not found: ${repoRoot}`);
+    return 2;
+  }
+
+  if (!VALID_AGENTS.includes(opts.agent)) {
+    console.error(`Unknown agent: ${opts.agent}. Valid: ${VALID_AGENTS.join(", ")}`);
+    return 2;
   }
 
   const driver = buildDriver(opts.agent);
@@ -141,32 +174,76 @@ export async function runRunCommand(opts: RunOptions): Promise<number> {
     return 2;
   }
 
-  if (opts.watch) {
-    return runWatchMode(repoRoot, driver, jobs, opts);
+  // For non-TUI modes (dry-run, json, watch), parse inline
+  if (opts.dryRun || opts.output === "json" || opts.watch) {
+    return runHeadless(opts, repoRoot, driver);
   }
 
-  const snap = snapshot(repoRoot);
-  const noPush = !opts.push;
+  // ── TUI mode: welcome screen shows while we parse ──────
+  const ui = new StitchUI(opts.agent, repoRoot);
+  ui.start();
 
+  // Step 0: Detect
+  ui.setLoading("Detecting CI platform...", 0);
+  const platform = detectPlatform(repoRoot);
+
+  // Step 1: Parse
+  ui.setLoading("Parsing CI configuration...", 1);
+  let allJobs: CIJob[];
+  try {
+    allJobs = parseCIConfig(repoRoot, platform);
+  } catch (err) {
+    ui.stop();
+    if (err instanceof CIParseError) {
+      console.error(`Error parsing CI config: ${err.message}`);
+      return 2;
+    }
+    throw err;
+  }
+
+  if (allJobs.length === 0) {
+    ui.stop();
+    console.log("No CI configuration found (.gitlab-ci.yml or .github/workflows/)");
+    return 0;
+  }
+
+  // Step 2: Classify
+  let classifications: Record<string, string> | null = null;
+  const filterCfg = {
+    only: opts.jobs
+      ? opts.jobs
+          .split(",")
+          .map((j) => j.trim())
+          .filter(Boolean)
+      : null,
+  };
+
+  if (!filterCfg.only) {
+    const jobNames = allJobs.map((j) => j.name);
+    ui.setLoading("Loading job cache...", 2);
+    classifications = loadCache(repoRoot, jobNames);
+    if (!classifications) {
+      ui.setLoading(`Classifying ${jobNames.length} jobs with ${opts.agent}...`, 2);
+      classifications = await classifyWithLLM(jobNames, opts.agent, repoRoot);
+      if (classifications) {
+        saveCache(repoRoot, jobNames, classifications);
+      }
+    }
+  }
+
+  let jobs = applyFilter(allJobs, filterCfg, classifications);
+
+  // Ensure welcome screen is visible for at least 2 seconds total
+  const elapsed = Date.now() - ui.startedAt;
+  const remaining = Math.max(0, 2000 - elapsed);
+  ui.setLoading("Ready.", 3);
+  if (remaining > 0) await new Promise((r) => setTimeout(r, remaining));
+
+  const noPush = !opts.push;
   const config: Partial<RunnerConfig> = {
     maxAttempts: opts.maxAttempts,
     failFast: opts.failFast,
   };
-
-  if (opts.output === "json") {
-    const runner = new Runner(repoRoot, driver, config);
-    const report = await runner.run(jobs);
-    console.log(JSON.stringify(report.toDict(), null, 2));
-    autoCommitPush(repoRoot, snap, report, noPush);
-    return report.exitCode();
-  }
-
-  // Storm TUI mode - persistent, re-runnable
-  const ui = new StitchUI(opts.agent, repoRoot);
-  ui.start();
-
-  // Welcome screen visible for 2 seconds
-  await new Promise((r) => setTimeout(r, 2000));
 
   let lastExitCode = 0;
 

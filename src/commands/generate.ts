@@ -1,6 +1,6 @@
-import { resolve } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { analyzeRepo, repoContextSummary } from "../core/repo-context.js";
 import { which } from "../util.js";
 
@@ -94,8 +94,7 @@ async function callAgent(
     return null;
   }
 
-  const args =
-    agent === "codex" ? ["exec", prompt] : ["-p", prompt, "--output-format", "text"];
+  const args = agent === "codex" ? ["exec", prompt] : ["-p", prompt, "--output-format", "text"];
 
   return new Promise((resolve) => {
     const proc = spawn(binary, args, {

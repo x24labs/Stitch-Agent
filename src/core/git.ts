@@ -35,8 +35,8 @@ export function snapshot(repoRoot: string): GitSnapshot {
   const aheadResult = run(["rev-list", "@{u}..HEAD", "--count"], repoRoot);
   let ahead = 0;
   if (aheadResult.returncode === 0) {
-    const parsed = parseInt(aheadResult.stdout.trim(), 10);
-    if (!isNaN(parsed)) ahead = parsed;
+    const parsed = Number.parseInt(aheadResult.stdout.trim(), 10);
+    if (!Number.isNaN(parsed)) ahead = parsed;
   }
 
   return { clean, branch, hasRemote: true, ahead };

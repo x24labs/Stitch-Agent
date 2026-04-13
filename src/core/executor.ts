@@ -29,7 +29,12 @@ function runShellCommand(
   timeoutMs: number,
 ): Promise<{ stdout: string; exitCode: number; timedOut: boolean }> {
   return new Promise((resolve) => {
-    const proc = spawn("sh", ["-c", cmd], { cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    const proc = spawn("sh", ["-c", cmd], {
+      cwd,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+    });
     const chunks: Buffer[] = [];
     let timedOut = false;
     let done = false;
@@ -37,7 +42,11 @@ function runShellCommand(
     const timer = setTimeout(() => {
       if (!done) {
         timedOut = true;
-        try { process.kill(-proc.pid!, "SIGKILL"); } catch { proc.kill("SIGKILL"); }
+        try {
+          process.kill(-proc.pid!, "SIGKILL");
+        } catch {
+          proc.kill("SIGKILL");
+        }
       }
     }, timeoutMs);
 
@@ -73,7 +82,12 @@ export class LocalExecutor {
 
   async runJob(job: CIJob): Promise<ExecResult> {
     if (job.script.length === 0) {
-      return { log: "(job has no script commands)", exitCode: 0, timedOut: false, durationSeconds: 0 };
+      return {
+        log: "(job has no script commands)",
+        exitCode: 0,
+        timedOut: false,
+        durationSeconds: 0,
+      };
     }
 
     const start = performance.now();

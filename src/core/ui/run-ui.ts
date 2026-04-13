@@ -55,15 +55,23 @@ interface AppState {
 
 // ── State ──────────────────────────────────────────────────────────────────
 
+const PIPELINE_STEPS = ["Detect", "Parse", "Classify", "Execute", "Fix", "Commit", "Done"];
+
 class TuiState {
   state: AppState;
+  loadingMsg = "Detecting CI configuration...";
+  pipelineStep = 0; // index into PIPELINE_STEPS
   onRerun: (() => void) | null = null;
   onQuit: (() => void) | null = null;
 
   constructor() {
     this.state = {
-      jobs: [], fixing: null, startTime: Date.now(),
-      phase: "welcome", runCount: 0, lastReport: null,
+      jobs: [],
+      fixing: null,
+      startTime: Date.now(),
+      phase: "welcome",
+      runCount: 0,
+      lastReport: null,
     };
   }
 
@@ -71,14 +79,21 @@ class TuiState {
     this.state = {
       ...this.state,
       jobs: jobs.map((j) => ({
-        name: j.name, stage: j.stage,
+        name: j.name,
+        stage: j.stage,
         status: j.skipReason ? "skipped" : "pending",
         skipReason: j.skipReason,
-        startTime: null, duration: null,
-        attempts: 0, maxAttempts: 1, errorLog: "",
+        startTime: null,
+        duration: null,
+        attempts: 0,
+        maxAttempts: 1,
+        errorLog: "",
       })),
-      fixing: null, startTime: Date.now(), phase: "running",
+      fixing: null,
+      startTime: Date.now(),
+      phase: "running",
     };
+    this.pipelineStep = 3; // Execute
   }
 
   jobStarted(name: string, attempt: number, maxAttempts: number) {
@@ -96,21 +111,26 @@ class TuiState {
     this.state = {
       ...this.state,
       jobs: this.state.jobs.map((j) =>
-        j.name === name ? {
-          ...j, status: result.status, attempts: result.attempts,
-          duration: j.startTime ? (Date.now() - j.startTime) / 1000 : null,
-          errorLog: result.errorLog,
-        } : j,
+        j.name === name
+          ? {
+              ...j,
+              status: result.status,
+              attempts: result.attempts,
+              duration: j.startTime ? (Date.now() - j.startTime) / 1000 : null,
+              errorLog: result.errorLog,
+            }
+          : j,
       ),
     };
   }
 
   driverStarted(name: string, driverName: string) {
+    this.pipelineStep = 4; // Fix
     const names = new Set(name.split(",").map((n) => n.trim()));
     this.state = {
       ...this.state,
       fixing: { label: name, driver: driverName, log: "" },
-      jobs: this.state.jobs.map((j) => names.has(j.name) ? { ...j, status: "fixing" } : j),
+      jobs: this.state.jobs.map((j) => (names.has(j.name) ? { ...j, status: "fixing" } : j)),
     };
   }
 
@@ -121,50 +141,160 @@ class TuiState {
   }
 
   markDone(report: RunReport, commitSha: string | null, pushed: boolean) {
+    if (commitSha) this.pipelineStep = 5; // Commit
     const passed = report.jobs.filter((j) => j.status === "passed").length;
-    const failed = report.jobs.filter((j) => j.status === "escalated" || j.status === "failed").length;
+    const failed = report.jobs.filter(
+      (j) => j.status === "escalated" || j.status === "failed",
+    ).length;
     const elapsed = (Date.now() - this.state.startTime) / 1000;
+    this.pipelineStep = 6; // Done
     this.state = {
-      ...this.state, phase: "done", fixing: null,
+      ...this.state,
+      phase: "done",
+      fixing: null,
       runCount: this.state.runCount + 1,
       lastReport: { passed, failed, fixed: report.fixedJobs, elapsed, commitSha, pushed },
     };
   }
 }
 
+// ── Pipeline Stepper ───────────────────────────────────────────────────────
+
+function renderPipeline(step: number, cols: number): string {
+  const isLast = step >= PIPELINE_STEPS.length - 1;
+  const parts: string[] = [];
+  for (let i = 0; i < PIPELINE_STEPS.length; i++) {
+    const name = PIPELINE_STEPS[i]!;
+    if (i < step || (i === step && isLast)) {
+      // Completed: green
+      parts.push(boldFg(green, `[ ${name} ]`));
+    } else if (i === step) {
+      // Current: cyan
+      parts.push(boldFg(cyan, `[ ${name} ]`));
+    } else {
+      // Pending: dim
+      parts.push(dimText(`[ ${name} ]`));
+    }
+    if (i < PIPELINE_STEPS.length - 1) {
+      parts.push(
+        i < step || (i < step + 1 && isLast) ? fg(green, " \u2192 ") : dimText(" \u2192 "),
+      );
+    }
+  }
+  const line = parts.join("");
+  return center(line, cols);
+}
+
 // ── Render Functions ───────────────────────────────────────────────────────
 
-const LOGO = [
-  " \u2588\u2588\u2588 \u2588\u2588\u2588 \u2588\u2588\u2588 \u2588\u2588\u2588 \u2588\u2588\u2588 \u2588 \u2588",
-  " \u2588    \u2588   \u2588   \u2588  \u2588   \u2588 \u2588",
-  " \u2588\u2588\u2588  \u2588   \u2588   \u2588  \u2588   \u2588\u2588\u2588",
-  "   \u2588  \u2588   \u2588   \u2588  \u2588   \u2588 \u2588",
-  " \u2588\u2588\u2588  \u2588  \u2588\u2588\u2588  \u2588  \u2588\u2588\u2588 \u2588 \u2588",
-];
+// Big block font: each letter is 4 rows x 3 cols
+// Block font using half-block chars for compact height (4 rows, denser)
+const B = "\u2588"; // full block
+const T = "\u2580"; // upper half block
+const L = "\u2584"; // lower half block
+const BLOCK_FONT: Record<string, string[]> = {
+  S: [`${B}${B}${B}`, `${B}${L}${L}`, `${T}${T}${B}`, `${B}${B}${B}`],
+  T: [`${B}${B}${B}`, ` ${B} `, ` ${B} `, ` ${B} `],
+  I: [`${B}${B}${B}`, ` ${B} `, ` ${B} `, `${B}${B}${B}`],
+  C: [`${B}${B}${B}`, `${B}  `, `${B}  `, `${B}${B}${B}`],
+  H: [`${B} ${B}`, `${B}${B}${B}`, `${B} ${B}`, `${B} ${B}`],
+};
 
-function renderWelcome(agent: string, repo: string): string {
-  const lines: string[] = [""];
-  for (const l of LOGO) lines.push("  " + boldFg(blue, l));
-  lines.push("");
-  lines.push("  " + dimText("v2.0.0"));
-  lines.push("  " + dimText("Run your CI jobs locally. Fix failures with AI."));
-  lines.push("");
-  lines.push(`  ${dimText("Agent:")} ${boldFg(blue, agent)}    ${dimText("Repo:")} ${boldFg(cyan, repo)}`);
-  lines.push("");
-  lines.push("  " + dimText("Initializing..."));
-  lines.push("");
+function bigText(word: string): string[] {
+  const rows: string[] = [];
+  for (let r = 0; r < 4; r++) {
+    let line = "";
+    for (const ch of word) {
+      const glyph = BLOCK_FONT[ch];
+      if (glyph) {
+        if (line.length > 0) line += "  ";
+        line += glyph[r]!;
+      }
+    }
+    rows.push(line);
+  }
+  return rows;
+}
+
+function center(text: string, width: number): string {
+  const visible = text.replace(/\x1b\[[0-9;]*m/g, "").length;
+  const left = Math.max(0, Math.floor((width - visible) / 2));
+  return " ".repeat(left) + text;
+}
+
+function renderWelcome(
+  agent: string,
+  repo: string,
+  spinner: Spinner,
+  loadingMsg: string,
+  pipelineStep: number,
+): string {
+  const cols = process.stdout.columns || 80;
+  const rows = process.stdout.rows || 24;
+  const logo = bigText("STITCH");
+
+  const content: string[] = [];
+
+  // Logo
+  for (const l of logo) content.push(center(bold(l), cols));
+  content.push("");
+
+  // Tagline
+  content.push(center(bold("Run your CI jobs locally. Fix failures with AI."), cols));
+  content.push("");
+
+  // Stats line
+  const stats = `${boldFg(blue, "Agent")} ${dimText(agent)}   ${fg(cyan, "\u00b7")}   ${boldFg(cyan, "Repo")} ${dimText(repo)}   ${fg(cyan, "\u00b7")}   ${boldFg(purple, "v2.0.0")}`;
+  content.push(center(stats, cols));
+  content.push("");
+  content.push("");
+
+  // Pipeline stepper
+  content.push(renderPipeline(pipelineStep, cols));
+  content.push("");
+
+  // Loading state with spinner
+  const loadLine = `${fg(cyan, spinner.frame)}  ${dimText(loadingMsg)}`;
+  content.push(center(loadLine, cols));
+
+  // Vertically center: add blank lines above
+  const totalLines = content.length;
+  const topPad = Math.max(0, Math.floor((rows - totalLines - 3) / 2));
+  const lines: string[] = [];
+  for (let i = 0; i < topPad; i++) lines.push("");
+  lines.push(...content);
+
+  // Fill remaining space
+  const remaining = Math.max(0, rows - lines.length - 2);
+  for (let i = 0; i < remaining; i++) lines.push("");
+
+  // Footer at bottom
+  lines.push(dimText(line(cols - 2)));
+  const footerLeft = `  ${boldFg(blue, "\u2588\u2590\u2588")} ${bold("STITCH")}`;
+  const footerRight = `${dimText("q to exit")}  `;
+  const footerGap = Math.max(2, cols - 20 - 12);
+  lines.push(`${footerLeft}${" ".repeat(footerGap)}${footerRight}`);
+
   return lines.join("\n");
 }
 
 function statusLabel(s: string): [string, string] {
   switch (s) {
-    case "passed": return [" PASS", green];
-    case "escalated": case "failed": return [" FAIL", red];
-    case "running": return ["  RUN", blue];
-    case "fixing": return ["  FIX", purple];
-    case "skipped": return [" SKIP", ""];
-    case "pending": return [" WAIT", ""];
-    default: return ["   --", ""];
+    case "passed":
+      return [" PASS", green];
+    case "escalated":
+    case "failed":
+      return [" FAIL", red];
+    case "running":
+      return ["  RUN", blue];
+    case "fixing":
+      return ["  FIX", purple];
+    case "skipped":
+      return [" SKIP", ""];
+    case "pending":
+      return [" WAIT", ""];
+    default:
+      return ["   --", ""];
   }
 }
 
@@ -184,19 +314,35 @@ function renderJobRow(j: JobState, spinner: Spinner): string {
     info = j.skipReason?.includes("infra") ? "infra" : "skipped";
   }
 
+  const isPassed = j.status === "passed";
+  const isFailed = j.status === "escalated" || j.status === "failed";
   const statusStr = isActive
-    ? ` ${fg(color, spinner.frame)}${boldFg(color, label.trim())}`
-    : color ? boldFg(color, label) : dimText(label);
+    ? ` ${fg(color, spinner.frame)} ${boldFg(color, label.trim())}`
+    : isPassed
+      ? `${fg(green, " \u2713")}${boldFg(green, label)}`
+      : isFailed
+        ? `${fg(red, " \u2717")}${boldFg(red, label)}`
+        : isSkip
+          ? dimText(` \u00bb${label}`)
+          : color
+            ? boldFg(color, label)
+            : dimText(label);
 
   const nameStr = isSkip ? dimText(pad(j.name, 22)) : pad(j.name, 22);
-  const stageStr = dimText(pad(j.stage, 14));
-  const infoStr = dimText(info);
+  const stageStr = isSkip ? dimText(pad(j.stage, 14)) : pad(j.stage, 14);
+  const infoStr = isSkip ? dimText(info) : info;
 
   return `  ${statusStr}  ${nameStr}  ${stageStr}  ${infoStr}`;
 }
 
-function renderFrame(state: AppState, agent: string, repo: string, spinner: Spinner): string {
-  if (state.phase === "welcome") return renderWelcome(agent, repo);
+function renderFrame(tuiState: TuiState, agent: string, repo: string, spinner: Spinner): string {
+  const state = tuiState.state;
+  if (state.phase === "welcome")
+    return renderWelcome(agent, repo, spinner, tuiState.loadingMsg, tuiState.pipelineStep);
+
+  const cols = process.stdout.columns || 80;
+  const w = cols - 4; // content width (2 padding each side)
+  const barW = Math.max(20, Math.min(w - 25, 60)); // progress bar width
 
   const runnable = state.jobs.filter((j) => j.status !== "skipped");
   const skipped = state.jobs.filter((j) => j.status === "skipped");
@@ -207,59 +353,90 @@ function renderFrame(state: AppState, agent: string, repo: string, spinner: Spin
   const allPassed = isDone && state.lastReport?.failed === 0;
 
   const ms = Date.now() - state.startTime;
-  const pct = isDone ? 100 : Math.round(Math.min(
-    ((done + running * 0.5) / (runnable.length || 1)) * 100 + Math.min(ms / 1000, 10), 99));
+  const pct = isDone
+    ? 100
+    : Math.round(
+        Math.min(
+          ((done + running * 0.5) / (runnable.length || 1)) * 100 + Math.min(ms / 1000, 10),
+          99,
+        ),
+      );
   const barColor = allPassed ? green : isDone ? red : blue;
 
   const lines: string[] = [];
 
   // ── Header
-  const titleColor = allPassed ? green : isDone ? red : blue;
-  lines.push(`  ${boldFg(titleColor, "STITCH")}`);
-  lines.push(`  ${dimText("Run your CI jobs locally. Fix failures with AI.")}`);
+  const logo = bigText("STITCH");
+  for (const l of logo) lines.push(`  ${bold(l)}`);
+  lines.push("");
+  lines.push("  Run your CI jobs locally.");
+  lines.push("  Fix failures with AI.");
+  lines.push("");
   let infoLine = `  ${dimText("Agent:")} ${boldFg(blue, agent)}  ${dimText("Repo:")} ${boldFg(cyan, repo)}`;
-  if (state.runCount > 0) infoLine += `  ${dimText("Run:")} ${fg(purple, "#" + state.runCount)}`;
+  if (state.runCount > 0) infoLine += `  ${dimText("Run:")} ${fg(purple, `#${state.runCount}`)}`;
   infoLine += `  ${dimText("Jobs:")} ${fg(cyan, String(runnable.length))}`;
   if (skipped.length > 0) infoLine += `  ${dimText("Skipped:")} ${dimText(String(skipped.length))}`;
   lines.push(infoLine);
+  lines.push("");
 
   // ── Progress
-  let pLine = `  ${progressBar(pct, 40, barColor)} ${dimText(`${done}/${runnable.length}`)} ${dimText(`${pct}%`)}`;
+  let pLine = `  ${progressBar(pct, barW, barColor)} ${dimText(`${done}/${runnable.length}`)} ${dimText(`${pct}%`)}`;
   if (isRunning) pLine += `  ${fg(cyan, spinner.frame)} ${fg(cyan, formatElapsed(ms))}`;
-  if (isDone && state.lastReport) pLine += `  ${dimText(state.lastReport.elapsed.toFixed(1) + "s")}`;
+  if (isDone && state.lastReport)
+    pLine += `  ${dimText(`${state.lastReport.elapsed.toFixed(1)}s`)}`;
   lines.push(pLine);
   lines.push("");
 
   // ── Job table
-  lines.push(`  ${line(70)}`);
-  lines.push(`  ${boldFg(blue, pad("STATUS", 6))}  ${boldFg(blue, pad("JOB", 22))}  ${boldFg(blue, pad("STAGE", 14))}  ${boldFg(blue, "INFO")}`);
-  lines.push(`  ${line(70)}`);
+  lines.push(`  ${line(w)}`);
+  lines.push(
+    `    ${boldFg(blue, pad("STATUS", 6))}  ${boldFg(blue, pad("JOB", 22))}  ${boldFg(blue, pad("STAGE", 14))}  ${boldFg(blue, "INFO")}`,
+  );
+  lines.push(`  ${line(w)}`);
   for (const j of runnable) lines.push(renderJobRow(j, spinner));
   if (skipped.length > 0) {
-    lines.push(`  ${line(70)}`);
+    lines.push(`  ${line(w)}`);
     for (const j of skipped) lines.push(renderJobRow(j, spinner));
   }
-  lines.push(`  ${line(70)}`);
+  lines.push(`  ${line(w)}`);
 
   // ── Driver panel
-  if (state.fixing && state.fixing.log) {
+  // Driver log: fixed 14 lines (2 header + 12 log) to prevent frame height changes
+  if (state.fixing) {
+    const LOG_ROWS = 12;
     lines.push("");
-    lines.push(`  ${fg(purple, spinner.frame)} ${boldFg(purple, state.fixing.label)}  ${dimText("fixing with")} ${boldFg(blue, state.fixing.driver)}`);
-    const logLines = state.fixing.log.trim().split("\n").slice(-12);
+    lines.push(
+      `  ${fg(purple, spinner.frame)} ${boldFg(purple, state.fixing.label)}  ${dimText("fixing with")} ${boldFg(blue, state.fixing.driver)}`,
+    );
+    const logLines = (state.fixing.log || "")
+      .trim()
+      .split("\n")
+      .filter(
+        (l) =>
+          !l.includes("\u2192") && !l.includes("STITCH -") && !l.includes("\u2500\u2500\u2500"),
+      )
+      .slice(-LOG_ROWS);
     for (const l of logLines) {
       const lo = l.toLowerCase();
-      const c = ["error", "fail", "assert", "exception"].some((k) => lo.includes(k)) ? red
-        : l.startsWith("> ") ? cyan : "";
+      const c = ["error", "fail", "assert", "exception"].some((k) => lo.includes(k))
+        ? red
+        : l.startsWith("> ")
+          ? cyan
+          : "";
       lines.push(`    ${c ? fg(c, l) : dimText(l)}`);
     }
+    // Pad to fixed height
+    for (let i = logLines.length; i < LOG_ROWS; i++) lines.push("");
   }
 
   // ── Failed errors
   if (isDone) {
-    const failed = state.jobs.filter((j) => (j.status === "escalated" || j.status === "failed") && j.errorLog);
+    const failed = state.jobs.filter(
+      (j) => (j.status === "escalated" || j.status === "failed") && j.errorLog,
+    );
     for (const j of failed) {
       lines.push("");
-      lines.push(`  ${boldFg(red, "x " + j.name)}`);
+      lines.push(`  ${boldFg(red, `x ${j.name}`)}`);
       for (const l of j.errorLog.trim().split("\n").slice(-6)) {
         const c = l.toLowerCase().includes("error") ? red : "";
         lines.push(`    ${c ? fg(c, l) : dimText(l)}`);
@@ -271,33 +448,47 @@ function renderFrame(state: AppState, agent: string, repo: string, spinner: Spin
   if (isDone && state.lastReport?.commitSha) {
     lines.push("");
     let cLine = `  ${fg(green, "*")} ${dimText("committed")} ${boldFg(orange, state.lastReport.commitSha.slice(0, 8))}`;
-    cLine += ` ${dimText("fix(stitch): " + state.lastReport.fixed.join(", "))}`;
+    cLine += ` ${dimText(`fix(stitch): ${state.lastReport.fixed.join(", ")}`)}`;
     if (state.lastReport.pushed) cLine += ` ${fg(green, "pushed")}`;
     lines.push(cLine);
   }
 
-  // ── Result
-  if (isDone && state.lastReport) {
-    lines.push("");
-    lines.push(allPassed
-      ? `  ${boldFg(green, `All ${state.lastReport.passed} jobs passed`)}`
-      : `  ${boldFg(red, `${state.lastReport.failed} failed, ${state.lastReport.passed} passed`)}`
-    );
-  }
+  // ── Pipeline
+  lines.push("");
+  lines.push(renderPipeline(tuiState.pipelineStep, cols));
 
   // ── Footer
   lines.push("");
-  lines.push(`  ${line(70)}`);
-  const statusStr = isRunning ? boldFg(blue, " STITCH running")
-    : allPassed ? boldFg(green, " STITCH passed")
-    : isDone ? boldFg(red, " STITCH failed")
-    : boldFg(blue, " STITCH");
-  const cmds = isDone
+  lines.push(`  ${line(w)}`);
+  let statusStr: string;
+  let statusVisible: number;
+  if (allPassed && state.lastReport) {
+    statusStr = boldFg(green, ` STITCH - All ${state.lastReport.passed} jobs passed`);
+    statusVisible = 28 + String(state.lastReport.passed).length;
+  } else if (isDone && state.lastReport) {
+    statusStr = boldFg(
+      red,
+      ` STITCH - ${state.lastReport.failed} failed, ${state.lastReport.passed} passed`,
+    );
+    statusVisible =
+      22 + String(state.lastReport.failed).length + String(state.lastReport.passed).length;
+  } else if (isRunning) {
+    statusStr = boldFg(blue, " STITCH - Running");
+    statusVisible = 18;
+  } else {
+    statusStr = boldFg(blue, " STITCH");
+    statusVisible = 8;
+  }
+  const cmdsStr = isDone
     ? `${bold("enter")} ${dimText("run again")}  ${bold("q")} ${dimText("quit")}`
     : `${bold("q")} ${dimText("quit")}  ${bold("ctrl+c")} ${dimText("abort")}`;
-  // Right-align commands: fill space between status and commands
-  const gap = Math.max(2, 70 - 18 - 30);
-  lines.push(`  ${statusStr}${" ".repeat(gap)}${cmds}`);
+  const cmdsVisible = isDone ? 23 : 22;
+  const gap = Math.max(2, cols - 2 - statusVisible - cmdsVisible - 2);
+  lines.push(`  ${statusStr}${" ".repeat(gap)}${cmdsStr}`);
+
+  // Pad to fill screen height (prevents ghost lines from longer previous frames)
+  const termRows = process.stdout.rows || 24;
+  while (lines.length < termRows) lines.push("");
 
   return lines.join("\n");
 }
@@ -311,6 +502,7 @@ export class StitchUI {
   private stdinHandler: ((data: Buffer) => void) | null = null;
   private agent: string;
   private repo: string;
+  startedAt = 0;
 
   constructor(agent: string, repo: string) {
     this.tuiState = new TuiState();
@@ -320,16 +512,23 @@ export class StitchUI {
     this.repo = repo.split("/").slice(-2).join("/");
   }
 
+  setLoading(msg: string, step?: number) {
+    this.tuiState.loadingMsg = msg;
+    if (step !== undefined) this.tuiState.pipelineStep = step;
+    this.renderer.repaint();
+  }
+
   initJobs(jobs: CIJob[]) {
     this.tuiState.initJobs(jobs);
     this.renderer.repaint();
   }
 
   start() {
+    this.startedAt = Date.now();
     this.renderer.enter();
     this.spinner.start(() => this.renderer.repaint());
     this.renderer.startLoop(
-      () => renderFrame(this.tuiState.state, this.agent, this.repo, this.spinner),
+      () => renderFrame(this.tuiState, this.agent, this.repo, this.spinner),
       200,
     );
 
@@ -344,7 +543,10 @@ export class StitchUI {
           if (this.tuiState.onQuit) this.tuiState.onQuit();
           process.exit(0);
         }
-        if ((key === "\r" || key === "\n" || key === "r" || key === "R") && this.tuiState.state.phase === "done") {
+        if (
+          (key === "\r" || key === "\n" || key === "r" || key === "R") &&
+          this.tuiState.state.phase === "done"
+        ) {
           this.tuiState.onRerun?.();
         }
       };
@@ -359,7 +561,11 @@ export class StitchUI {
     if (this.stdinHandler) {
       process.stdin.removeListener("data", this.stdinHandler);
       this.stdinHandler = null;
-      try { if (process.stdin.isTTY) process.stdin.setRawMode(false); } catch { /* */ }
+      try {
+        if (process.stdin.isTTY) process.stdin.setRawMode(false);
+      } catch {
+        /* */
+      }
     }
   }
 
@@ -377,11 +583,23 @@ export class StitchUI {
 
   get callback(): RunnerCallback {
     return {
-      jobStarted: (n, a, m) => { this.tuiState.jobStarted(n, a, m); this.renderer.repaint(); },
+      jobStarted: (n, a, m) => {
+        this.tuiState.jobStarted(n, a, m);
+        this.renderer.repaint();
+      },
       jobLogUpdate: () => {},
-      jobFinished: (n, r) => { this.tuiState.jobFinished(n, r); this.renderer.repaint(); },
-      driverStarted: (n, d) => { this.tuiState.driverStarted(n, d); this.renderer.repaint(); },
-      driverLogUpdate: (n, l) => { this.tuiState.driverLogUpdate(n, l); this.renderer.repaint(); },
+      jobFinished: (n, r) => {
+        this.tuiState.jobFinished(n, r);
+        this.renderer.repaint();
+      },
+      driverStarted: (n, d) => {
+        this.tuiState.driverStarted(n, d);
+        this.renderer.repaint();
+      },
+      driverLogUpdate: (n, l) => {
+        this.tuiState.driverLogUpdate(n, l);
+        // No repaint here - the 200ms render loop handles it
+      },
     };
   }
 }

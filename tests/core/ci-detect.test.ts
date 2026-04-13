@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { detectPlatform } from "../../src/core/ci-detect.js";
 
 describe("detectPlatform", () => {
@@ -11,14 +11,14 @@ describe("detectPlatform", () => {
     tmp = join(tmpdir(), `stitch-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(tmp, { recursive: true });
     // Clean env
-    delete process.env.GITLAB_CI;
-    delete process.env.GITHUB_ACTIONS;
+    Reflect.deleteProperty(process.env, "GITLAB_CI");
+    Reflect.deleteProperty(process.env, "GITHUB_ACTIONS");
   });
 
   afterEach(() => {
     rmSync(tmp, { recursive: true, force: true });
-    delete process.env.GITLAB_CI;
-    delete process.env.GITHUB_ACTIONS;
+    Reflect.deleteProperty(process.env, "GITLAB_CI");
+    Reflect.deleteProperty(process.env, "GITHUB_ACTIONS");
   });
 
   it("detects GitLab from env var", () => {

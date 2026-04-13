@@ -1,4 +1,11 @@
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join, relative } from "node:path";
 
 export const IGNORE_DIRS = new Set([
@@ -35,11 +42,7 @@ export const IGNORE_DIRS = new Set([
   ".angular",
 ]);
 
-export const IGNORE_FILES = new Set([
-  ".stitch.lock",
-  ".DS_Store",
-  "Thumbs.db",
-]);
+export const IGNORE_FILES = new Set([".stitch.lock", ".DS_Store", "Thumbs.db"]);
 
 export const KEEP_HIDDEN = new Set([".gitlab-ci.yml", ".github", ".gitignore"]);
 
@@ -97,9 +100,7 @@ export function fileSnapshot(repoRoot: string): Map<string, [number, number]> {
         if (name.startsWith(".") && !KEEP_HIDDEN.has(name)) continue;
         const rel = relative(repoRoot, full);
         snap.set(rel, [st.mtimeMs, st.size]);
-      } catch {
-        continue;
-      }
+      } catch {}
     }
   }
 
@@ -116,7 +117,10 @@ const DEFAULT_WATCH_CONFIG: WatchConfig = {
   pollInterval: 1.0,
 };
 
-function snapshotsEqual(a: Map<string, [number, number]>, b: Map<string, [number, number]>): boolean {
+function snapshotsEqual(
+  a: Map<string, [number, number]>,
+  b: Map<string, [number, number]>,
+): boolean {
   if (a.size !== b.size) return false;
   for (const [key, [mtime, size]] of a) {
     const bVal = b.get(key);
@@ -134,7 +138,7 @@ export async function waitForChangeThenIdle(
   config?: Partial<WatchConfig>,
 ): Promise<void> {
   const cfg = { ...DEFAULT_WATCH_CONFIG, ...config };
-  let baseline = fileSnapshot(repoRoot);
+  const baseline = fileSnapshot(repoRoot);
   let current = baseline;
 
   // Phase 1: wait for any change
@@ -205,8 +209,8 @@ export class StitchLock {
   private readPid(): number | null {
     try {
       const raw = readFileSync(this.path, "utf-8").trim();
-      const pid = parseInt(raw, 10);
-      return isNaN(pid) ? null : pid;
+      const pid = Number.parseInt(raw, 10);
+      return Number.isNaN(pid) ? null : pid;
     } catch {
       return null;
     }

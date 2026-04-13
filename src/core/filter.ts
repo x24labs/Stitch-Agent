@@ -56,7 +56,7 @@ export function saveCache(
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     cachePath(repoRoot),
-    JSON.stringify({ hash: jobNamesHash(jobNames), jobs: classifications }, null, 2) + "\n",
+    `${JSON.stringify({ hash: jobNamesHash(jobNames), jobs: classifications }, null, 2)}\n`,
   );
 }
 
@@ -122,10 +122,7 @@ async function callCodex(prompt: string, repoRoot?: string): Promise<string | nu
   }
 }
 
-function parseClassification(
-  raw: string,
-  jobNames: string[],
-): Record<string, string> | null {
+function parseClassification(raw: string, jobNames: string[]): Record<string, string> | null {
   let text = raw.trim();
   if (text.startsWith("```")) {
     const lines = text.split("\n").filter((ln) => !ln.startsWith("```"));

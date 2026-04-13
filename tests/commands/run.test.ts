@@ -1,6 +1,6 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runRunCommand } from "../../src/commands/run.js";
 
@@ -70,7 +70,7 @@ lint:
     const originalLog = console.log;
     let output = "";
     console.log = (...args: unknown[]) => {
-      output += args.map(String).join(" ") + "\n";
+      output += `${args.map(String).join(" ")}\n`;
     };
 
     const code = await runRunCommand({

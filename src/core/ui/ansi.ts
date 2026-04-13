@@ -16,7 +16,7 @@ export const CLEAR_LINE = `${CSI}2K`;
 
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.startsWith("#") ? hex.slice(1) : hex;
-  const n = parseInt(h, 16);
+  const n = Number.parseInt(h, 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
