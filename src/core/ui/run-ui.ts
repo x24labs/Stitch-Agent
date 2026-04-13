@@ -167,18 +167,41 @@ function renderPipeline(step: number, cols: number): string {
 
 // ── Render Functions ───────────────────────────────────────────────────────
 
+// Stitch bird logo (size 2, 15 rows x 72 cols)
+const BIRD = [
+  "                                                    .",
+  "                                    *+++++++++=         :",
+  "                                  *-------:::==+-.     +",
+  "           :*+:                 *------*%%*  +=++====*%===-:.",
+  "          :+++++=             *=-----*%%%%%%%%%%=.  :#",
+  "             ++++++         **++++++*%%%%%%%%%%     #",
+  "               =+++++:  :***++++++++#%%%%%%%%     #.",
+  "                 +++++=:-**+++++++++++#%%%%%%%%    +-",
+  "                   +++=--***+++++++++++%%%%%%%%%%   .-",
+  "                     :-**++++++++++++%%%%%%%%%%%%   #",
+  "                     ++++++++**##%%%%%%%%%%%%%%=   #",
+  "                   +*+=-*#####%%%%%%%%%%%%%%%*    #",
+  "                          %%%%%%%%%%%%%%%%%%     -",
+  "                            .: :=%%=-.",
+  "                               :   ..",
+];
+
 // Big block font: each letter is 5 rows x 4 cols (3 visible + 1 space)
+// Block font using half-block chars for compact height (4 rows, denser)
+const B = "\u2588"; // full block
+const T = "\u2580"; // upper half block
+const L = "\u2584"; // lower half block
 const BLOCK_FONT: Record<string, string[]> = {
-  S: ["\u2588\u2588\u2588", "\u2588  ", "\u2588\u2588\u2588", "  \u2588", "\u2588\u2588\u2588"],
-  T: ["\u2588\u2588\u2588", " \u2588 ", " \u2588 ", " \u2588 ", " \u2588 "],
-  I: ["\u2588\u2588\u2588", " \u2588 ", " \u2588 ", " \u2588 ", "\u2588\u2588\u2588"],
-  C: ["\u2588\u2588\u2588", "\u2588  ", "\u2588  ", "\u2588  ", "\u2588\u2588\u2588"],
-  H: ["\u2588 \u2588", "\u2588 \u2588", "\u2588\u2588\u2588", "\u2588 \u2588", "\u2588 \u2588"],
+  S: [`${B}${B}${B}`, `${B}${L}${L}`, `${T}${T}${B}`, `${B}${B}${B}`],
+  T: [`${B}${B}${B}`, ` ${B} `, ` ${B} `, ` ${B} `],
+  I: [`${B}${B}${B}`, ` ${B} `, ` ${B} `, `${B}${B}${B}`],
+  C: [`${B}${B}${B}`, `${B}  `, `${B}  `, `${B}${B}${B}`],
+  H: [`${B} ${B}`, `${B}${B}${B}`, `${B} ${B}`, `${B} ${B}`],
 };
 
 function bigText(word: string): string[] {
   const rows: string[] = [];
-  for (let r = 0; r < 5; r++) {
+  for (let r = 0; r < 4; r++) {
     let line = "";
     for (const ch of word) {
       const glyph = BLOCK_FONT[ch];
@@ -315,10 +338,27 @@ function renderFrame(tuiState: TuiState, agent: string, repo: string, spinner: S
 
   const lines: string[] = [];
 
-  // ── Header
+  // ── Header (title left, bird logo right)
   const logo = bigText("STITCH");
-  for (const l of logo) lines.push(`  ${bold(l)}`);
-  lines.push(`  ${"Run your CI jobs locally. Fix failures with AI."}`);
+  const titleWidth = 30;
+  const headerGap = 4;
+  // Vertically center: logo is taller, offset title to middle of logo
+  const titleOffset = Math.floor((BIRD.length - logo.length) / 2);
+  const blankRow = titleOffset + logo.length; // empty line after STITCH
+  const subtitleRow = blankRow + 1;
+  const totalRows = Math.max(BIRD.length, subtitleRow + 2);
+  for (let i = 0; i < totalRows; i++) {
+    const titleIdx = i - titleOffset;
+    const left = titleIdx >= 0 && titleIdx < logo.length
+      ? pad(logo[titleIdx]!, titleWidth)
+      : i === subtitleRow
+        ? pad("Run your CI jobs locally.", titleWidth)
+        : i === subtitleRow + 1
+          ? pad("Fix failures with AI.", titleWidth)
+          : " ".repeat(titleWidth);
+    const right = i < BIRD.length ? BIRD[i]! : "";
+    lines.push(`  ${bold(left)}${" ".repeat(headerGap)}${right}`);
+  }
   lines.push("");
   let infoLine = `  ${dimText("Agent:")} ${boldFg(blue, agent)}  ${dimText("Repo:")} ${boldFg(cyan, repo)}`;
   if (state.runCount > 0) infoLine += `  ${dimText("Run:")} ${fg(purple, "#" + state.runCount)}`;
