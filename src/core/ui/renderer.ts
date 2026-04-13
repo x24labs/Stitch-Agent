@@ -1,61 +1,94 @@
-// Terminal renderer - uses ANSI save/restore cursor position
-// Save cursor before frame, restore before next frame, overwrite in place
+// OpenTUI-backed terminal renderer
+// Replaces raw ANSI cursor/write calls with OpenTUI's native double-buffered,
+// differential rendering pipeline. Eliminates flickering.
 
-export class Renderer {
-  private timer: ReturnType<typeof setInterval> | null = null;
-  private renderFn: (() => string) | null = null;
-  private started = false;
-  private cols = 80;
+import {
+  ASCIIFontRenderable,
+  BoxRenderable,
+  type CliRenderer,
+  type CliRendererConfig,
+  type StyledText,
+  TextRenderable,
+  createCliRenderer,
+} from "@opentui/core";
 
-  enter(): void {
-    this.started = true;
-    this.cols = process.stdout.columns || 80;
-    // Clear screen, move to top, hide cursor, save position
-    process.stdout.write("\x1b[2J\x1b[H\x1b[?25l\x1b7");
-  }
+export interface RendererElements {
+  root: BoxRenderable;
+  renderer: CliRenderer;
+}
 
-  exit(): void {
-    if (this.started) {
-      this.started = false;
-      process.stdout.write("\x1b[?25h");
-    }
-  }
+const RENDERER_CONFIG: CliRendererConfig = {
+  exitOnCtrlC: false,
+  screenMode: "alternate-screen",
+  targetFps: 30,
+  maxFps: 30,
+  useMouse: false,
+};
 
-  paint(content: string): void {
-    if (!this.started) return;
+export async function createRenderer(): Promise<RendererElements> {
+  const renderer = await createCliRenderer(RENDERER_CONFIG);
+  const root = new BoxRenderable(renderer, {
+    id: "root",
+    flexDirection: "column",
+    width: "100%",
+    height: "100%",
+  });
+  renderer.root.add(root);
+  return { root, renderer };
+}
 
-    // Restore saved cursor position (top of screen), then save again
-    process.stdout.write("\x1b8\x1b7");
+// Helper: create a text renderable and add to parent
+export function addText(
+  ctx: CliRenderer,
+  parent: BoxRenderable,
+  id: string,
+  opts?: {
+    content?: StyledText | string;
+    flexGrow?: number;
+    live?: boolean;
+    wrapMode?: "none" | "char" | "word";
+  },
+): TextRenderable {
+  const text = new TextRenderable(ctx, {
+    id,
+    content: opts?.content ?? "",
+    flexGrow: opts?.flexGrow,
+    live: opts?.live,
+    wrapMode: opts?.wrapMode ?? "none",
+  });
+  parent.add(text);
+  return text;
+}
 
-    const lines = content.split("\n");
-    const out: string[] = [];
-    for (const l of lines) {
-      const visible = l.replace(/\x1b\[[0-9;]*m/g, "").length;
-      // \x1b[2K clears the line, \r moves to column 0, then write content
-      out.push(`\x1b[2K${l}${" ".repeat(Math.max(0, this.cols - visible))}`);
-    }
-    process.stdout.write(out.join("\n"));
-  }
+// Helper: create a box renderable and add to parent
+export function addBox(
+  ctx: CliRenderer,
+  parent: BoxRenderable,
+  id: string,
+  opts?: Partial<ConstructorParameters<typeof BoxRenderable>[1]>,
+): BoxRenderable {
+  const box = new BoxRenderable(ctx, { id, ...opts });
+  parent.add(box);
+  return box;
+}
 
-  startLoop(renderFn: () => string, intervalMs = 200): void {
-    this.renderFn = renderFn;
-    this.paint(renderFn());
-    this.timer = setInterval(() => {
-      this.cols = process.stdout.columns || 80;
-      if (this.renderFn) this.paint(this.renderFn());
-    }, intervalMs);
-  }
-
-  stopLoop(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
-  }
-
-  repaint(): void {
-    if (this.renderFn && this.started) {
-      this.paint(this.renderFn());
-    }
-  }
+// Helper: create an ASCII font renderable and add to parent
+export function addAsciiFont(
+  ctx: CliRenderer,
+  parent: BoxRenderable,
+  id: string,
+  text: string,
+  opts?: {
+    color?: string;
+    font?: "tiny" | "block" | "shade" | "slick" | "huge" | "grid" | "pallet";
+  },
+): ASCIIFontRenderable {
+  const ascii = new ASCIIFontRenderable(ctx, {
+    id,
+    text,
+    font: opts?.font ?? "block",
+    color: opts?.color,
+  });
+  parent.add(ascii);
+  return ascii;
 }
