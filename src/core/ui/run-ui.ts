@@ -285,8 +285,8 @@ function buildJobRow(j: JobState, spinnerFrame: string): StyledText {
   const chunks: ReturnType<typeof bold>[] = [
     ...statusChunks,
     isSkip ? dim(pad(j.name, 24)) : bold(pad(j.name, 24)),
-    dim(pad(j.stage, 16)),
-    dim(info),
+    isSkip ? dim(pad(j.stage, 16)) : { __isChunk: true as const, text: pad(j.stage, 16) },
+    isSkip ? dim(info) : { __isChunk: true as const, text: info },
   ];
 
   return new StyledText(chunks);
