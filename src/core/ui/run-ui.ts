@@ -167,26 +167,7 @@ function renderPipeline(step: number, cols: number): string {
 
 // ── Render Functions ───────────────────────────────────────────────────────
 
-// Stitch bird logo (size 2, 15 rows x 72 cols)
-const BIRD = [
-  "                                                    .",
-  "                                    *+++++++++=         :",
-  "                                  *-------:::==+-.     +",
-  "           :*+:                 *------*%%*  +=++====*%===-:.",
-  "          :+++++=             *=-----*%%%%%%%%%%=.  :#",
-  "             ++++++         **++++++*%%%%%%%%%%     #",
-  "               =+++++:  :***++++++++#%%%%%%%%     #.",
-  "                 +++++=:-**+++++++++++#%%%%%%%%    +-",
-  "                   +++=--***+++++++++++%%%%%%%%%%   .-",
-  "                     :-**++++++++++++%%%%%%%%%%%%   #",
-  "                     ++++++++**##%%%%%%%%%%%%%%=   #",
-  "                   +*+=-*#####%%%%%%%%%%%%%%%*    #",
-  "                          %%%%%%%%%%%%%%%%%%     -",
-  "                            .: :=%%=-.",
-  "                               :   ..",
-];
-
-// Big block font: each letter is 5 rows x 4 cols (3 visible + 1 space)
+// Big block font: each letter is 4 rows x 3 cols
 // Block font using half-block chars for compact height (4 rows, denser)
 const B = "\u2588"; // full block
 const T = "\u2580"; // upper half block
@@ -309,8 +290,8 @@ function renderJobRow(j: JobState, spinner: Spinner): string {
     : color ? boldFg(color, label) : dimText(label);
 
   const nameStr = isSkip ? dimText(pad(j.name, 22)) : pad(j.name, 22);
-  const stageStr = dimText(pad(j.stage, 14));
-  const infoStr = dimText(info);
+  const stageStr = isSkip ? dimText(pad(j.stage, 14)) : pad(j.stage, 14);
+  const infoStr = isSkip ? dimText(info) : info;
 
   return `  ${statusStr}  ${nameStr}  ${stageStr}  ${infoStr}`;
 }
@@ -338,27 +319,12 @@ function renderFrame(tuiState: TuiState, agent: string, repo: string, spinner: S
 
   const lines: string[] = [];
 
-  // ── Header (title left, bird logo right)
+  // ── Header
   const logo = bigText("STITCH");
-  const titleWidth = 30;
-  const headerGap = 4;
-  // Vertically center: logo is taller, offset title to middle of logo
-  const titleOffset = Math.floor((BIRD.length - logo.length) / 2);
-  const blankRow = titleOffset + logo.length; // empty line after STITCH
-  const subtitleRow = blankRow + 1;
-  const totalRows = Math.max(BIRD.length, subtitleRow + 2);
-  for (let i = 0; i < totalRows; i++) {
-    const titleIdx = i - titleOffset;
-    const left = titleIdx >= 0 && titleIdx < logo.length
-      ? pad(logo[titleIdx]!, titleWidth)
-      : i === subtitleRow
-        ? pad("Run your CI jobs locally.", titleWidth)
-        : i === subtitleRow + 1
-          ? pad("Fix failures with AI.", titleWidth)
-          : " ".repeat(titleWidth);
-    const right = i < BIRD.length ? BIRD[i]! : "";
-    lines.push(`  ${bold(left)}${" ".repeat(headerGap)}${right}`);
-  }
+  for (const l of logo) lines.push(`  ${bold(l)}`);
+  lines.push("");
+  lines.push("  Run your CI jobs locally.");
+  lines.push("  Fix failures with AI.");
   lines.push("");
   let infoLine = `  ${dimText("Agent:")} ${boldFg(blue, agent)}  ${dimText("Repo:")} ${boldFg(cyan, repo)}`;
   if (state.runCount > 0) infoLine += `  ${dimText("Run:")} ${fg(purple, "#" + state.runCount)}`;
@@ -376,7 +342,7 @@ function renderFrame(tuiState: TuiState, agent: string, repo: string, spinner: S
 
   // ── Job table
   lines.push(`  ${line(w)}`);
-  lines.push(`  ${boldFg(blue, pad("STATUS", 6))}  ${boldFg(blue, pad("JOB", 22))}  ${boldFg(blue, pad("STAGE", 14))}  ${boldFg(blue, "INFO")}`);
+  lines.push(`    ${boldFg(blue, pad("STATUS", 6))}  ${boldFg(blue, pad("JOB", 22))}  ${boldFg(blue, pad("STAGE", 14))}  ${boldFg(blue, "INFO")}`);
   lines.push(`  ${line(w)}`);
   for (const j of runnable) lines.push(renderJobRow(j, spinner));
   if (skipped.length > 0) {
