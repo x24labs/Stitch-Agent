@@ -271,24 +271,21 @@ function buildJobRow(j: JobState, spinnerFrame: string): StyledText {
   const [label, color] = statusLabel(j.status);
   const statusChunks: ReturnType<typeof bold>[] = [];
   if (isActive) {
-    statusChunks.push(fg(color)(` ${spinnerFrame} `), fg(color)(label.trim()));
+    statusChunks.push(fg(color)(`${spinnerFrame} `), fg(color)(pad(label.trim(), 6)));
   } else if (isPassed) {
-    statusChunks.push(fg(cGreen)(" \u2713"), fg(cGreen)(label));
+    statusChunks.push(fg(cGreen)("\u2713 "), fg(cGreen)(pad(label.trim(), 6)));
   } else if (isFailed) {
-    statusChunks.push(fg(cRed)(" \u2717"), fg(cRed)(label));
+    statusChunks.push(fg(cRed)("\u2717 "), fg(cRed)(pad(label.trim(), 6)));
   } else if (isSkip) {
-    statusChunks.push(dim(` \u00bb${label}`));
+    statusChunks.push(dim(`\u00bb ${pad(label.trim(), 6)}`));
   } else {
-    statusChunks.push(dim(label));
+    statusChunks.push(dim(pad(label.trim(), 8)));
   }
 
   const chunks: ReturnType<typeof bold>[] = [
     ...statusChunks,
-    dim("  "),
-    isSkip ? dim(pad(j.name, 22)) : bold(pad(j.name, 22)),
-    dim("  "),
-    dim(pad(j.stage, 14)),
-    dim("  "),
+    isSkip ? dim(pad(j.name, 24)) : bold(pad(j.name, 24)),
+    dim(pad(j.stage, 16)),
     dim(info),
   ];
 
@@ -569,7 +566,12 @@ function updateRunView(
   const jobLines: StyledText[] = [];
   jobLines.push(styledLine(w));
   jobLines.push(
-    t`  ${fg(cBlue)(bold(pad("STATUS", 6)))}  ${fg(cBlue)(bold(pad("JOB", 22)))}  ${fg(cBlue)(bold(pad("STAGE", 14)))}  ${fg(cBlue)(bold("INFO"))}`,
+    new StyledText([
+      fg(cBlue)(bold(pad("STATUS", 8))),
+      fg(cBlue)(bold(pad("JOB", 24))),
+      fg(cBlue)(bold(pad("STAGE", 16))),
+      fg(cBlue)(bold("INFO")),
+    ]),
   );
   jobLines.push(styledLine(w));
   for (const j of runnable) jobLines.push(buildJobRow(j, spinner.frame));
@@ -677,14 +679,27 @@ function updateRunView(
   } else {
     statusChunk = fg(cBlue)(bold("STITCH"));
   }
+  const cmdsText = isDone ? "enter run again  q quit" : "q quit  ctrl+c abort";
   const cmdsChunk = isDone
     ? new StyledText([bold("enter"), dim(" run again  "), bold("q"), dim(" quit")])
     : new StyledText([bold("q"), dim(" quit  "), bold("ctrl+c"), dim(" abort")]);
+
+  // Calculate status visible length (rough: strip the style wrapper)
+  const statusText =
+    allPassed && state.lastReport
+      ? `STITCH - All ${state.lastReport.passed} jobs passed`
+      : isDone && state.lastReport
+        ? `STITCH - ${state.lastReport.failed} failed, ${state.lastReport.passed} passed`
+        : isRunning
+          ? "STITCH - Running"
+          : "STITCH";
+  const gap = Math.max(2, w - statusText.length - cmdsText.length);
+
   view.runFooter.content = new StyledText([
     ...styledLine(w).chunks,
     { __isChunk: true as const, text: "\n" },
     statusChunk,
-    dim("  "),
+    { __isChunk: true as const, text: " ".repeat(gap) },
     ...cmdsChunk.chunks,
   ]);
 }
