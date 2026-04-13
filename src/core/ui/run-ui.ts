@@ -2,14 +2,14 @@
 
 import type { CliRenderer } from "@opentui/core";
 import {
-  BoxRenderable,
-  TextRenderable,
   ASCIIFontRenderable,
-  t,
+  BoxRenderable,
+  StyledText,
+  TextRenderable,
   bold,
   dim,
   fg,
-  StyledText,
+  t,
 } from "@opentui/core";
 import type { CIJob, JobResult, RunReport } from "../models.js";
 import type { RunnerCallback } from "../runner.js";
@@ -267,26 +267,32 @@ function buildJobRow(j: JobState, spinnerFrame: string): StyledText {
     info = j.skipReason?.includes("infra") ? "infra" : "skipped";
   }
 
-  // Status column
+  // Status column - build as separate chunks (don't nest TextChunks in template literals)
   const [label, color] = statusLabel(j.status);
-  let statusChunk: ReturnType<typeof bold>;
+  const statusChunks: ReturnType<typeof bold>[] = [];
   if (isActive) {
-    statusChunk = fg(color)(` ${spinnerFrame} ${bold(label.trim())}`);
+    statusChunks.push(fg(color)(` ${spinnerFrame} `), fg(color)(label.trim()));
   } else if (isPassed) {
-    statusChunk = fg(cGreen)(` \u2713${bold(label)}`);
+    statusChunks.push(fg(cGreen)(" \u2713"), fg(cGreen)(label));
   } else if (isFailed) {
-    statusChunk = fg(cRed)(` \u2717${bold(label)}`);
+    statusChunks.push(fg(cRed)(" \u2717"), fg(cRed)(label));
   } else if (isSkip) {
-    statusChunk = dim(` \u00bb${label}`);
+    statusChunks.push(dim(` \u00bb${label}`));
   } else {
-    statusChunk = dim(label);
+    statusChunks.push(dim(label));
   }
 
-  const nameChunk = isSkip ? dim(pad(j.name, 22)) : bold(pad(j.name, 22));
-  const stageChunk = isSkip ? dim(pad(j.stage, 14)) : dim(pad(j.stage, 14));
-  const infoChunk = isSkip ? dim(info) : dim(info);
+  const chunks: ReturnType<typeof bold>[] = [
+    ...statusChunks,
+    dim("  "),
+    isSkip ? dim(pad(j.name, 22)) : bold(pad(j.name, 22)),
+    dim("  "),
+    dim(pad(j.stage, 14)),
+    dim("  "),
+    dim(info),
+  ];
 
-  return t`  ${statusChunk}  ${nameChunk}  ${stageChunk}  ${infoChunk}`;
+  return new StyledText(chunks);
 }
 
 function statusLabel(s: string): [string, string] {
