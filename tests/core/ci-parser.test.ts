@@ -286,6 +286,208 @@ jobs:
     });
   });
 
+  describe("Bitbucket Pipelines", () => {
+    it("parses the default pipeline", () => {
+      writeFileSync(
+        join(tmp, "bitbucket-pipelines.yml"),
+        `
+image: atlassian/default-image:3
+
+pipelines:
+  default:
+    - step:
+        name: Lint
+        script:
+          - bun install
+          - bun run lint
+    - step:
+        name: Test
+        script:
+          - bun test
+`,
+      );
+      const jobs = parseCIConfig(tmp);
+      expect(jobs).toHaveLength(2);
+      expect(jobs[0]?.name).toBe("Lint");
+      expect(jobs[0]?.stage).toBe("default");
+      expect(jobs[0]?.image).toBe("atlassian/default-image:3");
+      expect(jobs[0]?.script).toEqual(["bun install", "bun run lint"]);
+      expect(jobs[1]?.name).toBe("Test");
+    });
+
+    it("parses parallel steps as list", () => {
+      writeFileSync(
+        join(tmp, "bitbucket-pipelines.yml"),
+        `
+pipelines:
+  default:
+    - parallel:
+        - step:
+            name: Lint
+            script: [bun run lint]
+        - step:
+            name: Typecheck
+            script: [bun run typecheck]
+`,
+      );
+      const jobs = parseCIConfig(tmp);
+      expect(jobs).toHaveLength(2);
+      expect(jobs.map((j) => j.name)).toEqual(["Lint", "Typecheck"]);
+      expect(jobs.every((j) => j.stage === "default")).toBe(true);
+    });
+
+    it("parses parallel steps in object form (with fail-fast)", () => {
+      writeFileSync(
+        join(tmp, "bitbucket-pipelines.yml"),
+        `
+pipelines:
+  default:
+    - parallel:
+        fail-fast: true
+        steps:
+          - step:
+              name: A
+              script: [echo a]
+          - step:
+              name: B
+              script: [echo b]
+`,
+      );
+      const jobs = parseCIConfig(tmp);
+      expect(jobs.map((j) => j.name)).toEqual(["A", "B"]);
+    });
+
+    it("labels branch pipelines with 'branches:<pattern>'", () => {
+      writeFileSync(
+        join(tmp, "bitbucket-pipelines.yml"),
+        `
+pipelines:
+  branches:
+    main:
+      - step:
+          name: Deploy
+          script: [./deploy.sh]
+    'release/*':
+      - step:
+          name: Publish
+          script: [./publish.sh]
+  pull-requests:
+    '**':
+      - step:
+          name: PR Check
+          script: [bun run test]
+  custom:
+    nightly:
+      - step:
+          name: Nightly
+          script: [bun run e2e]
+`,
+      );
+      const jobs = parseCIConfig(tmp);
+      const stages = jobs.map((j) => j.stage);
+      expect(stages).toContain("branches:main");
+      expect(stages).toContain("branches:release/*");
+      expect(stages).toContain("pull-requests:**");
+      expect(stages).toContain("custom:nightly");
+    });
+
+    it("per-step image overrides top-level", () => {
+      writeFileSync(
+        join(tmp, "bitbucket-pipelines.yml"),
+        `
+image: node:18
+pipelines:
+  default:
+    - step:
+        name: Build
+        image: node:20
+        script: [npm run build]
+    - step:
+        name: Lint
+        script: [npm run lint]
+`,
+      );
+      const jobs = parseCIConfig(tmp);
+      expect(jobs[0]?.image).toBe("node:20");
+      expect(jobs[1]?.image).toBe("node:18");
+    });
+
+    it("parses nested stages (Premium feature)", () => {
+      writeFileSync(
+        join(tmp, "bitbucket-pipelines.yml"),
+        `
+pipelines:
+  default:
+    - stage:
+        name: Verify
+        steps:
+          - step:
+              name: Lint
+              script: [echo lint]
+          - step:
+              name: Test
+              script: [echo test]
+`,
+      );
+      const jobs = parseCIConfig(tmp);
+      expect(jobs).toHaveLength(2);
+      expect(jobs[0]?.stage).toBe("default:Verify");
+      expect(jobs[1]?.stage).toBe("default:Verify");
+    });
+
+    it("disambiguates repeated step names across pipelines", () => {
+      writeFileSync(
+        join(tmp, "bitbucket-pipelines.yml"),
+        `
+pipelines:
+  default:
+    - step:
+        name: Build
+        script: [echo a]
+  branches:
+    main:
+      - step:
+          name: Build
+          script: [echo b]
+`,
+      );
+      const jobs = parseCIConfig(tmp);
+      const names = jobs.map((j) => j.name);
+      expect(names).toEqual(["Build", "Build-2"]);
+    });
+
+    it("skips steps without script", () => {
+      writeFileSync(
+        join(tmp, "bitbucket-pipelines.yml"),
+        `
+pipelines:
+  default:
+    - step:
+        name: NoOp
+        caches: [node]
+`,
+      );
+      const jobs = parseCIConfig(tmp);
+      expect(jobs).toHaveLength(0);
+    });
+
+    it("gives steps without a name a fallback index", () => {
+      writeFileSync(
+        join(tmp, "bitbucket-pipelines.yml"),
+        `
+pipelines:
+  default:
+    - step:
+        script: [echo 1]
+    - step:
+        script: [echo 2]
+`,
+      );
+      const jobs = parseCIConfig(tmp);
+      expect(jobs.map((j) => j.name)).toEqual(["step-0", "step-1"]);
+    });
+  });
+
   describe("platform filtering", () => {
     it("only parses gitlab when platform=gitlab", () => {
       writeFileSync(join(tmp, ".gitlab-ci.yml"), "test:\n  script:\n    - echo gl");
@@ -309,6 +511,17 @@ jobs:
       const jobs = parseCIConfig(tmp, "github");
       expect(jobs).toHaveLength(1);
       expect(jobs[0]?.script).toEqual(["echo gh"]);
+    });
+
+    it("only parses bitbucket when platform=bitbucket", () => {
+      writeFileSync(join(tmp, ".gitlab-ci.yml"), "test:\n  script:\n    - echo gl");
+      writeFileSync(
+        join(tmp, "bitbucket-pipelines.yml"),
+        "pipelines:\n  default:\n    - step:\n        name: Check\n        script: [echo bb]",
+      );
+      const jobs = parseCIConfig(tmp, "bitbucket");
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.script).toEqual(["echo bb"]);
     });
   });
 

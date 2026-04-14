@@ -13,12 +13,14 @@ describe("detectPlatform", () => {
     // Clean env
     Reflect.deleteProperty(process.env, "GITLAB_CI");
     Reflect.deleteProperty(process.env, "GITHUB_ACTIONS");
+    Reflect.deleteProperty(process.env, "BITBUCKET_BUILD_NUMBER");
   });
 
   afterEach(() => {
     rmSync(tmp, { recursive: true, force: true });
     Reflect.deleteProperty(process.env, "GITLAB_CI");
     Reflect.deleteProperty(process.env, "GITHUB_ACTIONS");
+    Reflect.deleteProperty(process.env, "BITBUCKET_BUILD_NUMBER");
   });
 
   it("detects GitLab from env var", () => {
@@ -59,5 +61,21 @@ describe("detectPlatform", () => {
 
   it("returns unknown without repoRoot", () => {
     expect(detectPlatform()).toBe("unknown");
+  });
+
+  it("detects Bitbucket from env var", () => {
+    process.env.BITBUCKET_BUILD_NUMBER = "42";
+    expect(detectPlatform()).toBe("bitbucket");
+  });
+
+  it("detects Bitbucket from file", () => {
+    writeFileSync(join(tmp, "bitbucket-pipelines.yml"), "pipelines: {default: []}");
+    expect(detectPlatform(tmp)).toBe("bitbucket");
+  });
+
+  it("returns unknown when Bitbucket and GitLab both exist", () => {
+    writeFileSync(join(tmp, ".gitlab-ci.yml"), "stages: [test]");
+    writeFileSync(join(tmp, "bitbucket-pipelines.yml"), "pipelines: {default: []}");
+    expect(detectPlatform(tmp)).toBe("unknown");
   });
 });
