@@ -41,6 +41,7 @@ export interface ExecResult {
   exitCode: number;
   timedOut: boolean;
   durationSeconds: number;
+  cancelled?: boolean;
 }
 
 export interface GitSnapshot {

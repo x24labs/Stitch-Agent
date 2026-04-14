@@ -26,7 +26,11 @@ program
   .option("--max-attempts <n>", "Maximum fix attempts per job", (v) => Number.parseInt(v, 10), 3)
   .option("--output <format>", "Output format", "text")
   .option("--dry-run", "List runnable jobs without executing them", false)
-  .option("--fail-fast", "Stop after the first escalated job", false)
+  .option(
+    "--fail-fast",
+    "Cancel in-flight jobs as soon as one fails, then let the fix-loop proceed",
+    false,
+  )
   .option("--jobs <list>", "Comma-separated allowlist of job names to run")
   .option("--no-push", "Commit fixes locally but skip pushing to remote")
   .option("--watch", "Watch mode: re-run on file changes, no fixes", false)

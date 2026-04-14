@@ -200,4 +200,61 @@ describe("Runner", () => {
     expect(report.jobs[0]?.status).toBe("escalated");
     expect(report.jobs[1]?.status).toBe("passed");
   });
+
+  describe("fail-fast", () => {
+    it("cancels in-flight jobs when one fails, then fixes and re-verifies", async () => {
+      const exec = new StubExecutor();
+      // lint fails fast; test is slow and will be cancelled
+      exec.results.set("lint", [execResult({ log: "lint err", exitCode: 1 }), execResult()]);
+      exec.results.set("test", [execResult(), execResult()]);
+      exec.delaysMs.set("test", 100);
+      const drv = new StubDriver();
+      const r = runner(drv, exec, { maxAttempts: 3, failFast: true });
+      const report = await r.run([job("lint"), job("test")]);
+
+      expect(report.jobs[0]?.status).toBe("passed");
+      expect(report.jobs[1]?.status).toBe("passed");
+      // lint ran twice (fail + fixed), test ran twice (cancelled on attempt 1, passed on attempt 2)
+      expect(exec.calls.get("lint")).toBe(2);
+      expect(exec.calls.get("test")).toBe(2);
+      // Batch fix received only the known failure (lint), not the cancelled test
+      expect(drv.calls).toHaveLength(1);
+      expect(drv.calls[0]?.jobName).toBe("lint");
+    });
+
+    it("disables itself on the final attempt so cancelled jobs cannot hide", async () => {
+      // If fail-fast kept firing on the last attempt, cancelled jobs would be left
+      // in limbo (not passed, not failed). On the final attempt we always run the
+      // full set so every job gets a verdict.
+      const exec = new StubExecutor();
+      // lint keeps failing; test is slow and would be cancelled if fail-fast stayed on
+      exec.results.set("lint", [
+        execResult({ exitCode: 1 }),
+        execResult({ exitCode: 1 }),
+        execResult({ exitCode: 1 }),
+      ]);
+      exec.results.set("test", [execResult(), execResult(), execResult()]);
+      exec.delaysMs.set("test", 50);
+      const drv = new StubDriver();
+      const r = runner(drv, exec, { maxAttempts: 2, failFast: true });
+      const report = await r.run([job("lint"), job("test")]);
+
+      expect(report.jobs[0]?.status).toBe("escalated");
+      // test must have a verdict by the end, not stay cancelled
+      expect(report.jobs[1]?.status).toBe("passed");
+    });
+
+    it("has no effect when no jobs fail", async () => {
+      const exec = new StubExecutor();
+      exec.results.set("lint", [execResult()]);
+      exec.results.set("test", [execResult()]);
+      const drv = new StubDriver();
+      const r = runner(drv, exec, { failFast: true });
+      const report = await r.run([job("lint"), job("test")]);
+
+      expect(report.jobs.every((j) => j.status === "passed")).toBe(true);
+      expect(exec.calls.get("lint")).toBe(1);
+      expect(exec.calls.get("test")).toBe(1);
+    });
+  });
 });

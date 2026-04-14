@@ -73,6 +73,24 @@ stitch run claude
 
 Uses your existing CLI subscription (Claude Pro, ChatGPT Plus). Zero config by default; optional `.stitch.yml` for per-repo defaults (see [Configuration](#configuration-optional)).
 
+## Features
+
+What Stitch actually does, end to end:
+
+- **Three CI platforms out of the box.** Parses `.gitlab-ci.yml`, `.github/workflows/*.yml`, and `bitbucket-pipelines.yml` from the same CLI. No rewrite, no wrapper, no YAML translation layer.
+- **Parallel execution by design.** Jobs run concurrently during the detection phase, so your wall-clock time is `max(job_i)` instead of `sum(job_i)`. Your 4-job pipeline takes as long as your slowest job, not all four added together.
+- **Fail-fast when you want it.** `--fail-fast` cancels in-flight jobs the moment one fails, then hands that single failure to the agent to fix. No waiting for the other 3 jobs to finish before the fix-loop can start.
+- **Batch AI fixes.** When multiple jobs fail, Stitch sends *all* the failures to the agent in a single call. The agent sees the failures together, which means one fix can resolve correlated errors (a broken type that breaks both lint and typecheck, a missing import that breaks tests and build). One invocation, one edit pass, fewer tokens, fewer seconds.
+- **Re-verify, don't just re-report.** After the agent edits, Stitch re-runs the previously failed jobs to prove the fix actually worked. Up to `max_attempts` per job, configurable per repo.
+- **Pluggable agent CLI.** Works with Claude Code, Codex, and whatever you have a subscription for. No Anthropic or OpenAI API key required; Stitch just shells out to the agent you already pay for.
+- **Live TUI.** OpenTUI-based terminal interface with per-job progress, logs on demand, and stage grouping. Renders on any terminal; no ANSI flicker.
+- **Auto commit and push on green.** When the fix-loop lands, Stitch commits the change with a sensible message and pushes to the remote, so the CI fix closes the loop on its own. Opt out with `--no-push` or `push: false` in `.stitch.yml`.
+- **Watch mode.** Re-runs your CI on every save, with a debounce you control. Reports only, never invokes the agent.
+- **Zero-install-friendly.** `npx stitch-agent run claude` works without installing anything globally. No Python, no Docker, no account.
+- **JSON output for pipelines.** `--output json` gives you a machine-readable report if you want to wrap Stitch inside a larger tool.
+- **Prefix-match job filtering.** `--jobs test` picks up `test`, `test:unit`, `test-e2e`, `test_fast` with separator awareness, so you do not need to list every variant.
+- **Optional per-repo config.** `.stitch.yml` sets defaults (agent, max attempts, push policy, include/exclude job lists). CLI flags still win. When the file is absent, behavior is unchanged.
+
 ## Why Stitch
 
 Other tools fix CI failures with AI. None of them work like Stitch.
