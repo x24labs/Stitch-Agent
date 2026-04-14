@@ -220,7 +220,7 @@ function statusLabel(s: CheckStatus): string {
 
 function printHuman(results: CheckResult[]): void {
   const line = dim("\u2500".repeat(60));
-  process.stdout.write(`\n  ${fg(cCyan, bold("STITCH"))} ${dim("doctor")}\n\n`);
+  process.stdout.write(`\n  ${fg(cCyan, bold("STITCH"))} ${dim("Doctor")}\n\n`);
   process.stdout.write(`  ${line}\n`);
   for (const r of results) {
     const row = `  ${statusIcon(r.status)} ${statusLabel(r.status)}  ${bold(pad(r.name, 22))}${dim(r.message)}\n`;
