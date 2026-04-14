@@ -71,7 +71,7 @@ stitch run claude
   |- reports results with a live TUI
 ```
 
-Uses your existing CLI subscription (Claude Pro, ChatGPT Plus). Zero config.
+Uses your existing CLI subscription (Claude Pro, ChatGPT Plus). Zero config by default; optional `.stitch.yml` for per-repo defaults (see [Configuration](#configuration-optional)).
 
 ## Why Stitch
 
