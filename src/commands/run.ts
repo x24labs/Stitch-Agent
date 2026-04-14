@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { detectPlatform } from "../core/ci-detect.js";
 import { CIParseError, parseCIConfig } from "../core/ci-parser.js";
+import { ConfigError, type StitchConfig, loadConfig } from "../core/config.js";
 import { applyFilter, classifyWithLLM, loadCache, saveCache } from "../core/filter.js";
 import { commit, push, snapshot } from "../core/git.js";
 import type { CIJob, GitSnapshot } from "../core/models.js";
@@ -20,6 +21,19 @@ import type { AgentDriver } from "../drivers/types.js";
 export interface RunOptions {
   agent: string;
   repo: string;
+  maxAttempts?: number;
+  output: string;
+  dryRun: boolean;
+  failFast: boolean;
+  jobs?: string;
+  push?: boolean;
+  watch: boolean;
+  debounce: number;
+}
+
+interface ResolvedOptions {
+  agent: string;
+  repo: string;
   maxAttempts: number;
   output: string;
   dryRun: boolean;
@@ -28,6 +42,26 @@ export interface RunOptions {
   push: boolean;
   watch: boolean;
   debounce: number;
+  excludeJobs: string[] | null;
+  classification: "llm" | "none";
+}
+
+function resolveOptions(opts: RunOptions, cfg: StitchConfig | null): ResolvedOptions {
+  const include = opts.jobs ?? cfg?.jobs?.include?.join(",");
+  return {
+    agent: opts.agent,
+    repo: opts.repo,
+    maxAttempts: opts.maxAttempts ?? cfg?.max_attempts ?? 3,
+    output: opts.output,
+    dryRun: opts.dryRun,
+    failFast: opts.failFast,
+    jobs: include,
+    push: opts.push ?? cfg?.push ?? true,
+    watch: opts.watch,
+    debounce: opts.debounce,
+    excludeJobs: cfg?.jobs?.exclude ?? null,
+    classification: cfg?.classification ?? "llm",
+  };
 }
 
 const VALID_AGENTS = ["claude", "codex"];
@@ -66,7 +100,7 @@ function autoCommitPush(
 }
 
 async function runHeadless(
-  opts: RunOptions,
+  opts: ResolvedOptions,
   repoRoot: string,
   driver: AgentDriver,
 ): Promise<number> {
@@ -100,9 +134,10 @@ async function runHeadless(
           .map((j) => j.trim())
           .filter(Boolean)
       : null,
+    exclude: opts.excludeJobs,
   };
 
-  if (!filterCfg.only) {
+  if (!filterCfg.only && opts.classification === "llm") {
     const jobNames = allJobs.map((j) => j.name);
     classifications = loadCache(repoRoot, jobNames);
     if (!classifications) {
@@ -155,12 +190,27 @@ function printDryRun(jobs: CIJob[]): void {
   }
 }
 
-export async function runRunCommand(opts: RunOptions): Promise<number> {
-  const repoRoot = resolve(opts.repo);
+export async function runRunCommand(rawOpts: RunOptions): Promise<number> {
+  const repoRoot = resolve(rawOpts.repo);
   if (!existsSync(repoRoot)) {
     console.error(`Error: repo path not found: ${repoRoot}`);
     return 2;
   }
+
+  let fileConfig: StitchConfig | null;
+  try {
+    fileConfig = loadConfig(repoRoot);
+  } catch (err) {
+    if (err instanceof ConfigError) {
+      console.error(err.message);
+      return 2;
+    }
+    throw err;
+  }
+
+  // agent: CLI positional takes precedence, then config, then no further default
+  const agent = rawOpts.agent || fileConfig?.agent || "claude";
+  const opts = resolveOptions({ ...rawOpts, agent }, fileConfig);
 
   if (!VALID_AGENTS.includes(opts.agent)) {
     console.error(`Unknown agent: ${opts.agent}. Valid: ${VALID_AGENTS.join(", ")}`);
@@ -211,9 +261,10 @@ export async function runRunCommand(opts: RunOptions): Promise<number> {
           .map((j) => j.trim())
           .filter(Boolean)
       : null,
+    exclude: opts.excludeJobs,
   };
 
-  if (!filterCfg.only) {
+  if (!filterCfg.only && opts.classification === "llm") {
     const jobNames = allJobs.map((j) => j.name);
     ui.setLoading("Loading job cache...", 2);
     classifications = loadCache(repoRoot, jobNames);
@@ -284,7 +335,7 @@ async function runWatchMode(
   repoRoot: string,
   driver: AgentDriver,
   jobs: CIJob[],
-  opts: RunOptions,
+  opts: ResolvedOptions,
 ): Promise<number> {
   const runnable = jobs.filter((j) => !j.skipReason);
   if (runnable.length === 0) {

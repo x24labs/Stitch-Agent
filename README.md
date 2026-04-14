@@ -16,7 +16,7 @@
 
 ---
 
-Stitch parses your CI configuration (GitLab CI, GitHub Actions), runs the jobs on your machine, and when something fails, hands the error to an AI agent that fixes it. Feedback in seconds, not minutes. No API keys, no config files.
+Stitch parses your CI configuration (GitLab CI, GitHub Actions), runs the jobs on your machine, and when something fails, hands the error to an AI agent that fixes it. Feedback in seconds, not minutes. No API keys. Zero config by default, with an optional `.stitch.yml` for per-repo defaults.
 
 ```
                                                          +*+++++++++-         .+%
@@ -71,7 +71,7 @@ stitch run claude
   |- reports results with a live TUI
 ```
 
-Uses your existing CLI subscription (Claude Pro, ChatGPT Plus). Zero config.
+Uses your existing CLI subscription (Claude Pro, ChatGPT Plus). Zero config by default; optional `.stitch.yml` for per-repo defaults (see [Configuration](#configuration-optional)).
 
 ## Why Stitch
 
@@ -103,6 +103,7 @@ ln -s /path/to/stitch/library/skills/stitch ~/.claude/skills/stitch
 
 ```bash
 stitch run claude                          # run all runnable jobs
+stitch run                                 # agent from .stitch.yml (else: claude)
 stitch run claude --jobs lint,test         # only lint + test (prefix match)
 stitch run claude --dry-run                # show what would run
 stitch run claude --output json            # machine-readable output
@@ -135,6 +136,22 @@ stitch run claude --jobs lint,test,typecheck
 ```
 
 Prefix matching: `--jobs test` matches `test`, `test:unit`, `test-e2e`, `test_fast`.
+
+## Configuration (optional)
+
+Drop a `.stitch.yml` (or `.stitch.yaml`) at your repo root to set per-repo defaults. Every field is optional, and CLI flags always win over the file (flag > config > default). If the file is absent, behavior is identical to today.
+
+```yaml
+agent: claude              # claude | codex
+max_attempts: 3
+push: true                 # auto-push after a successful fix
+jobs:
+  include: [lint, test, typecheck]   # prefix-match allowlist
+  exclude: [deploy, publish]         # prefix-match blocklist
+classification: llm        # llm | none  (none = run every parsed job)
+```
+
+See [`.stitch.example.yml`](./.stitch.example.yml) for the full annotated template. Unknown fields are rejected, so typos surface immediately.
 
 ## License
 
