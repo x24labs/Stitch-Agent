@@ -1,11 +1,12 @@
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-export type CIPlatform = "gitlab" | "github" | "unknown";
+export type CIPlatform = "gitlab" | "github" | "bitbucket" | "unknown";
 
 const ENV_SIGNALS: [string, CIPlatform][] = [
   ["GITLAB_CI", "gitlab"],
   ["GITHUB_ACTIONS", "github"],
+  ["BITBUCKET_BUILD_NUMBER", "bitbucket"],
 ];
 
 export function detectPlatform(repoRoot?: string): CIPlatform {
@@ -18,6 +19,7 @@ export function detectPlatform(repoRoot?: string): CIPlatform {
 
 function detectFromFiles(repoRoot: string): CIPlatform {
   const hasGitlab = existsSync(join(repoRoot, ".gitlab-ci.yml"));
+  const hasBitbucket = existsSync(join(repoRoot, "bitbucket-pipelines.yml"));
   let hasGithub = false;
   try {
     const ghDir = join(repoRoot, ".github", "workflows");
@@ -26,7 +28,10 @@ function detectFromFiles(repoRoot: string): CIPlatform {
     // ignore
   }
 
-  if (hasGitlab && !hasGithub) return "gitlab";
-  if (hasGithub && !hasGitlab) return "github";
+  const matches = [hasGitlab, hasGithub, hasBitbucket].filter(Boolean).length;
+  if (matches !== 1) return "unknown";
+  if (hasGitlab) return "gitlab";
+  if (hasGithub) return "github";
+  if (hasBitbucket) return "bitbucket";
   return "unknown";
 }

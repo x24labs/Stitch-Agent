@@ -16,7 +16,7 @@
 
 ---
 
-Stitch parses your CI configuration (GitLab CI, GitHub Actions), runs the jobs on your machine, and when something fails, hands the error to an AI agent that fixes it. Feedback in seconds, not minutes. No API keys. Zero config by default, with an optional `.stitch.yml` for per-repo defaults.
+Stitch parses your CI configuration (GitLab CI, GitHub Actions, Bitbucket Pipelines), runs the jobs on your machine, and when something fails, hands the error to an AI agent that fixes it. Feedback in seconds, not minutes. No API keys. Zero config by default, with an optional `.stitch.yml` for per-repo defaults.
 
 ```
                                                          +*+++++++++-         .+%
@@ -57,7 +57,7 @@ stitch run claude
 ```
 stitch run claude
   |
-  |- parses .gitlab-ci.yml / .github/workflows/*.yml
+  |- parses .gitlab-ci.yml / .github/workflows/*.yml / bitbucket-pipelines.yml
   |- filters jobs (skips deploy, publish, docker-build)
   |- runs each job locally (subprocess with timeout)
   |

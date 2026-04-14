@@ -117,7 +117,8 @@ async function runHeadless(
   }
 
   if (allJobs.length === 0) {
-    const msg = "No CI configuration found (.gitlab-ci.yml or .github/workflows/)";
+    const msg =
+      "No CI configuration found (.gitlab-ci.yml, .github/workflows/, or bitbucket-pipelines.yml)";
     if (opts.output === "json") {
       console.log(JSON.stringify({ agent: opts.agent, jobs: [], reason: msg }));
     } else {
@@ -242,7 +243,9 @@ export async function runRunCommand(rawOpts: RunOptions): Promise<number> {
   }
 
   if (allJobs.length === 0) {
-    console.log("No CI configuration found (.gitlab-ci.yml or .github/workflows/)");
+    console.log(
+      "No CI configuration found (.gitlab-ci.yml, .github/workflows/, or bitbucket-pipelines.yml)",
+    );
     return 0;
   }
 
