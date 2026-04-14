@@ -103,4 +103,20 @@ describe("applyFilter", () => {
     const result = applyFilter(jobs, { only: null }, { other: "infra" });
     expect(result[0]?.skipReason).toBeNull();
   });
+
+  it("skips jobs matching the exclude list", () => {
+    const jobs = [job("lint"), job("deploy:prod"), job("publish")];
+    const result = applyFilter(jobs, { only: null, exclude: ["deploy", "publish"] });
+    expect(result[0]?.skipReason).toBeNull();
+    expect(result[1]?.skipReason).toContain("exclude");
+    expect(result[2]?.skipReason).toContain("exclude");
+  });
+
+  it("exclude runs after allowlist and does not override it", () => {
+    const jobs = [job("lint"), job("deploy")];
+    const result = applyFilter(jobs, { only: ["lint"], exclude: ["lint"] });
+    // allowlist admitted lint, exclude then skips it
+    expect(result[0]?.skipReason).toContain("exclude");
+    expect(result[1]?.skipReason).toContain("allowlist");
+  });
 });

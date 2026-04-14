@@ -32,8 +32,23 @@ program
     (v) => Number.parseFloat(v),
     3.0,
   )
-  .action(async (agent, opts) => {
-    const code = await runRunCommand({ agent, ...opts });
+  .action(async (agent, opts, cmd) => {
+    const fromCli = <T>(key: string, val: T): T | undefined => {
+      const src = cmd.getOptionValueSource(key);
+      return src === "cli" || src === "env" ? val : undefined;
+    };
+    const code = await runRunCommand({
+      agent,
+      repo: opts.repo,
+      maxAttempts: fromCli("maxAttempts", opts.maxAttempts),
+      output: opts.output,
+      dryRun: opts.dryRun,
+      failFast: opts.failFast,
+      jobs: opts.jobs,
+      push: fromCli("push", opts.push),
+      watch: opts.watch,
+      debounce: opts.debounce,
+    });
     process.exit(code);
   });
 

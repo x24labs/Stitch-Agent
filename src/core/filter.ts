@@ -10,6 +10,7 @@ const CACHE_FILE = "jobs.json";
 
 export interface FilterConfig {
   only: string[] | null;
+  exclude?: string[] | null;
 }
 
 function cachePath(repoRoot: string): string {
@@ -186,6 +187,12 @@ export function applyFilter(
       const label = classifications[job.name] ?? "verify";
       if (label === "infra") {
         skipReason = "infrastructure job (classified by LLM)";
+      }
+    }
+
+    if (!skipReason && cfg.exclude && cfg.exclude.length > 0) {
+      if (matchesAllowlist(job.name, cfg.exclude)) {
+        skipReason = `in exclude list ${JSON.stringify(cfg.exclude)}`;
       }
     }
 
