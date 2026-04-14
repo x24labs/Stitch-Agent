@@ -712,7 +712,8 @@ export class StitchUI {
   private tuiState: TuiState;
   private spinner: Spinner;
   private view: ViewTree | null = null;
-  private stdinHandler: ((data: Buffer) => void) | null = null;
+  private keypressHandler: ((event: { name?: string; ctrl?: boolean }) => void) | null = null;
+  private sigintHandler: (() => void) | null = null;
   private renderTimer: ReturnType<typeof setInterval> | null = null;
   private agent: string;
   private repo: string;
@@ -756,26 +757,35 @@ export class StitchUI {
     // Initial render
     this.refresh();
 
-    // Keyboard handler
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
-      process.stdin.resume();
-      this.stdinHandler = (data: Buffer) => {
-        const key = data.toString();
-        if (key === "q" || key === "Q" || key === "\x03") {
-          this.stop();
-          if (this.tuiState.onQuit) this.tuiState.onQuit();
-          process.exit(0);
-        }
-        if (
-          (key === "\r" || key === "\n" || key === "r" || key === "R") &&
-          this.tuiState.state.phase === "done"
-        ) {
-          this.tuiState.onRerun?.();
-        }
-      };
-      process.stdin.on("data", this.stdinHandler);
-    }
+    // Keyboard handler via OpenTUI's keypress API
+    const quit = () => {
+      this.stop();
+      if (this.tuiState.onQuit) this.tuiState.onQuit();
+      process.exit(0);
+    };
+
+    this.keypressHandler = (event) => {
+      const name = event.name;
+      if (name === "c" && event.ctrl) {
+        quit();
+        return;
+      }
+      if (name === "q") {
+        quit();
+        return;
+      }
+      if (
+        (name === "return" || name === "enter" || name === "r") &&
+        this.tuiState.state.phase === "done"
+      ) {
+        this.tuiState.onRerun?.();
+      }
+    };
+    this.view.renderer.keyInput.on("keypress", this.keypressHandler);
+
+    // Safety net: SIGINT (e.g., when raw mode is off or signal bypasses stdin parser)
+    this.sigintHandler = quit;
+    process.on("SIGINT", this.sigintHandler);
   }
 
   stop() {
@@ -784,18 +794,17 @@ export class StitchUI {
       clearInterval(this.renderTimer);
       this.renderTimer = null;
     }
+    if (this.keypressHandler && this.view) {
+      this.view.renderer.keyInput.off("keypress", this.keypressHandler);
+      this.keypressHandler = null;
+    }
+    if (this.sigintHandler) {
+      process.removeListener("SIGINT", this.sigintHandler);
+      this.sigintHandler = null;
+    }
     if (this.view) {
       this.view.renderer.destroy();
       this.view = null;
-    }
-    if (this.stdinHandler) {
-      process.stdin.removeListener("data", this.stdinHandler);
-      this.stdinHandler = null;
-      try {
-        if (process.stdin.isTTY) process.stdin.setRawMode(false);
-      } catch {
-        /* */
-      }
     }
   }
 
