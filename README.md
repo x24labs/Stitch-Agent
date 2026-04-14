@@ -41,6 +41,7 @@ Stitch parses your CI configuration (GitLab CI, GitHub Actions, Bitbucket Pipeli
 ## Quick start
 
 ```bash
+npx stitch-agent doctor                 # check your setup
 npx stitch-agent run claude --dry-run   # see what would run
 npx stitch-agent run claude             # run + fix failures
 ```
@@ -128,6 +129,8 @@ stitch run claude --output json            # machine-readable output
 stitch run claude --max-attempts 1         # report only, no fix attempts
 stitch run claude --fail-fast              # stop after first failure
 stitch run codex                           # use OpenAI Codex CLI instead
+stitch doctor                              # diagnose your setup
+stitch doctor --output json                # machine-readable diagnostics
 ```
 
 Agents:
