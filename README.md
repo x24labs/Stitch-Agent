@@ -16,7 +16,7 @@
 
 ---
 
-Stitch parses your CI configuration (GitLab CI, GitHub Actions), runs the jobs on your machine, and when something fails, hands the error to an AI agent that fixes it. Feedback in seconds, not minutes. No API keys, no config files.
+Stitch parses your CI configuration (GitLab CI, GitHub Actions), runs the jobs on your machine, and when something fails, hands the error to an AI agent that fixes it. Feedback in seconds, not minutes. No API keys. Zero config by default, with an optional `.stitch.yml` for per-repo defaults.
 
 ```
                                                          +*+++++++++-         .+%
@@ -135,6 +135,22 @@ stitch run claude --jobs lint,test,typecheck
 ```
 
 Prefix matching: `--jobs test` matches `test`, `test:unit`, `test-e2e`, `test_fast`.
+
+## Configuration (optional)
+
+Drop a `.stitch.yml` (or `.stitch.yaml`) at your repo root to set per-repo defaults. Every field is optional, and CLI flags always win over the file (flag > config > default). If the file is absent, behavior is identical to today.
+
+```yaml
+agent: claude              # claude | codex
+max_attempts: 3
+push: true                 # auto-push after a successful fix
+jobs:
+  include: [lint, test, typecheck]   # prefix-match allowlist
+  exclude: [deploy, publish]         # prefix-match blocklist
+classification: llm        # llm | none  (none = run every parsed job)
+```
+
+See [`.stitch.example.yml`](./.stitch.example.yml) for the full annotated template. Unknown fields are rejected, so typos surface immediately.
 
 ## License
 
