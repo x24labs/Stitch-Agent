@@ -12,12 +12,16 @@ program
 program
   .command("run")
   .description("Run CI jobs locally with an AI fix loop")
-  .argument("[agent]", "Which agent to delegate fixes to (claude|codex; falls back to .stitch.yml, then 'claude')", (val) => {
-    if (!["claude", "codex"].includes(val)) {
-      throw new Error(`Invalid agent: ${val}. Valid: claude, codex`);
-    }
-    return val;
-  })
+  .argument(
+    "[agent]",
+    "Which agent to delegate fixes to (claude|codex; falls back to .stitch.yml, then 'claude')",
+    (val) => {
+      if (!["claude", "codex"].includes(val)) {
+        throw new Error(`Invalid agent: ${val}. Valid: claude, codex`);
+      }
+      return val;
+    },
+  )
   .option("--repo <path>", "Repository root path", ".")
   .option("--max-attempts <n>", "Maximum fix attempts per job", (v) => Number.parseInt(v, 10), 3)
   .option("--output <format>", "Output format", "text")
