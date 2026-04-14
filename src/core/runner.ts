@@ -93,11 +93,20 @@ export class Runner {
     let pending = [...runnable];
 
     for (let attempt = 1; attempt <= this.config.maxAttempts; attempt++) {
-      const execResults = await this.runJobsParallel(pending, attempt);
+      // On the final attempt, disable fail-fast so we get a complete picture
+      // before escalating. Cancelled jobs cannot escalate because we never
+      // learned whether they would have passed or failed.
+      const useFailFast = this.config.failFast && attempt < this.config.maxAttempts;
+      const execResults = await this.runJobsParallel(pending, attempt, useFailFast);
 
       const failed: [CIJob, string][] = [];
+      const cancelled: CIJob[] = [];
       for (const job of pending) {
         const er = execResults.get(job.name)!;
+        if (er.cancelled) {
+          cancelled.push(job);
+          continue;
+        }
         if (er.exitCode === 0) {
           const result: JobResult = {
             name: job.name,
@@ -114,7 +123,13 @@ export class Runner {
         }
       }
 
-      if (failed.length === 0) break;
+      if (failed.length === 0 && cancelled.length === 0) break;
+      if (failed.length === 0) {
+        // Only cancelled jobs remain (shouldn't happen past attempt 1 because
+        // we disable fail-fast on the final attempt, but be defensive).
+        pending = cancelled;
+        continue;
+      }
 
       // Last attempt: escalate
       if (attempt >= this.config.maxAttempts) {
@@ -173,8 +188,8 @@ export class Runner {
         break;
       }
 
-      // Next round: only the failed jobs
-      pending = failed.map(([job]) => job);
+      // Next round: failed jobs + any that got cancelled by fail-fast
+      pending = [...failed.map(([job]) => job), ...cancelled];
     }
 
     // Preserve original order
@@ -193,15 +208,25 @@ export class Runner {
     return new RunReport(ordered, this.driver.name);
   }
 
-  private async runJobsParallel(jobs: CIJob[], attempt: number): Promise<Map<string, ExecResult>> {
+  private async runJobsParallel(
+    jobs: CIJob[],
+    attempt: number,
+    failFast: boolean,
+  ): Promise<Map<string, ExecResult>> {
     for (const job of jobs) {
       this.cb.jobStarted(job.name, attempt, this.config.maxAttempts);
     }
 
+    const controller = failFast ? new AbortController() : undefined;
     const pairs = await Promise.all(
       jobs.map(async (job): Promise<[string, ExecResult]> => {
-        const result = await this.executor.runJob(job);
-        this.cb.jobLogUpdate(job.name, result.log);
+        const result = await this.executor.runJob(job, controller?.signal);
+        if (!result.cancelled) {
+          this.cb.jobLogUpdate(job.name, result.log);
+        }
+        if (failFast && !result.cancelled && result.exitCode !== 0) {
+          controller?.abort();
+        }
         return [job.name, result];
       }),
     );

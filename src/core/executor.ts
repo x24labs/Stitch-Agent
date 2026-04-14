@@ -27,8 +27,14 @@ function runShellCommand(
   cwd: string,
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
-): Promise<{ stdout: string; exitCode: number; timedOut: boolean }> {
+  signal?: AbortSignal,
+): Promise<{ stdout: string; exitCode: number; timedOut: boolean; cancelled: boolean }> {
   return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve({ stdout: "", exitCode: -1, timedOut: false, cancelled: true });
+      return;
+    }
+
     const proc = spawn("sh", ["-c", cmd], {
       cwd,
       env,
@@ -37,18 +43,31 @@ function runShellCommand(
     });
     const chunks: Buffer[] = [];
     let timedOut = false;
+    let cancelled = false;
     let done = false;
+
+    const kill = () => {
+      try {
+        process.kill(-proc.pid!, "SIGKILL");
+      } catch {
+        proc.kill("SIGKILL");
+      }
+    };
 
     const timer = setTimeout(() => {
       if (!done) {
         timedOut = true;
-        try {
-          process.kill(-proc.pid!, "SIGKILL");
-        } catch {
-          proc.kill("SIGKILL");
-        }
+        kill();
       }
     }, timeoutMs);
+
+    const onAbort = () => {
+      if (!done) {
+        cancelled = true;
+        kill();
+      }
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     proc.stdout?.on("data", (chunk: Buffer) => chunks.push(chunk));
     proc.stderr?.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -56,17 +75,29 @@ function runShellCommand(
     proc.on("close", (code) => {
       done = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      let exitCode: number;
+      if (cancelled) exitCode = -1;
+      else if (timedOut) exitCode = 124;
+      else exitCode = code ?? -1;
       resolve({
         stdout: Buffer.concat(chunks).toString("utf-8"),
-        exitCode: timedOut ? 124 : (code ?? -1),
+        exitCode,
         timedOut,
+        cancelled,
       });
     });
 
     proc.on("error", (err) => {
       done = true;
       clearTimeout(timer);
-      resolve({ stdout: `Stitch: failed to spawn: ${err}\n`, exitCode: 127, timedOut: false });
+      signal?.removeEventListener("abort", onAbort);
+      resolve({
+        stdout: `Stitch: failed to spawn: ${err}\n`,
+        exitCode: 127,
+        timedOut: false,
+        cancelled: false,
+      });
     });
   });
 }
@@ -80,7 +111,7 @@ export class LocalExecutor {
     this.timeoutSeconds = timeoutSeconds;
   }
 
-  async runJob(job: CIJob): Promise<ExecResult> {
+  async runJob(job: CIJob, signal?: AbortSignal): Promise<ExecResult> {
     if (job.script.length === 0) {
       return {
         log: "(job has no script commands)",
@@ -96,14 +127,42 @@ export class LocalExecutor {
     let remaining = this.timeoutSeconds * 1000;
 
     for (const rawCmd of job.script) {
+      if (signal?.aborted) {
+        const duration = (performance.now() - start) / 1000;
+        return {
+          log: logParts.join(""),
+          exitCode: -1,
+          timedOut: false,
+          cancelled: true,
+          durationSeconds: duration,
+        };
+      }
+
       const cmd = needsSudo(rawCmd) ? prependSudo(rawCmd) : rawCmd;
       const cmdStart = performance.now();
       logParts.push(`$ ${cmd}\n`);
 
-      const result = await runShellCommand(cmd, this.repoRoot, env, Math.max(100, remaining));
+      const result = await runShellCommand(
+        cmd,
+        this.repoRoot,
+        env,
+        Math.max(100, remaining),
+        signal,
+      );
       logParts.push(result.stdout);
       const elapsed = performance.now() - cmdStart;
       remaining -= elapsed;
+
+      if (result.cancelled) {
+        const duration = (performance.now() - start) / 1000;
+        return {
+          log: logParts.join(""),
+          exitCode: -1,
+          timedOut: false,
+          cancelled: true,
+          durationSeconds: duration,
+        };
+      }
 
       if (result.timedOut) {
         logParts.push(`\nStitch: command timed out after ${this.timeoutSeconds}s\n`);
