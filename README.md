@@ -103,6 +103,7 @@ ln -s /path/to/stitch/library/skills/stitch ~/.claude/skills/stitch
 
 ```bash
 stitch run claude                          # run all runnable jobs
+stitch run                                 # agent from .stitch.yml (else: claude)
 stitch run claude --jobs lint,test         # only lint + test (prefix match)
 stitch run claude --dry-run                # show what would run
 stitch run claude --output json            # machine-readable output

@@ -12,7 +12,7 @@ program
 program
   .command("run")
   .description("Run CI jobs locally with an AI fix loop")
-  .argument("<agent>", "Which agent to delegate fixes to", (val) => {
+  .argument("[agent]", "Which agent to delegate fixes to (claude|codex; falls back to .stitch.yml, then 'claude')", (val) => {
     if (!["claude", "codex"].includes(val)) {
       throw new Error(`Invalid agent: ${val}. Valid: claude, codex`);
     }
@@ -38,7 +38,7 @@ program
       return src === "cli" || src === "env" ? val : undefined;
     };
     const code = await runRunCommand({
-      agent,
+      agent: agent ?? "",
       repo: opts.repo,
       maxAttempts: fromCli("maxAttempts", opts.maxAttempts),
       output: opts.output,
