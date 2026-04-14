@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { runDoctorCommand } from "./commands/doctor.js";
 import { runGenerateCommand } from "./commands/generate.js";
 import { runRunCommand } from "./commands/run.js";
 
@@ -70,6 +71,16 @@ program
   .option("--dry-run", "Analyze repo without calling the LLM", false)
   .action(async (agent, opts) => {
     const code = await runGenerateCommand({ agent, ...opts });
+    process.exit(code);
+  });
+
+program
+  .command("doctor")
+  .description("Run environment diagnostics (runtime, CI config, agent CLI, permissions)")
+  .option("--repo <path>", "Repository root path", ".")
+  .option("--output <format>", "Output format (text|json)", "text")
+  .action(async (opts) => {
+    const code = await runDoctorCommand({ repo: opts.repo, output: opts.output });
     process.exit(code);
   });
 
