@@ -29,7 +29,7 @@ function pad(s: string, n: number): string {
   return s.length >= n ? s.slice(0, n) : s + " ".repeat(n - s.length);
 }
 
-const STITCH_LOGO = [" █▀▀ ▀█▀ █ ▀█▀ █▀▀ █ █", "  ▄▄█  █  █  █  █▄▄ █▀█"];
+const STITCH_LOGO = ["█▀▀ ▀█▀ █ ▀█▀ █▀▀ █ █", " ▄▄█  █  █  █  █▄▄ █▀█"];
 
 interface HeaderStats {
   agent: string | null;
