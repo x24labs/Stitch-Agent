@@ -106,10 +106,11 @@ export async function runHistoryCommand(opts: HistoryOptions): Promise<number> {
   }
   process.stdout.write(`  ${line}\n\n`);
 
-  const fixed = view.finalized.filter((e) => e.status === "fixed").length;
-  const failed = view.finalized.filter((e) => e.status === "escalated").length;
-  const passed = view.finalized.filter((e) => e.status === "passed").length;
-  const passedRuns = view.finalized
+  const all = [...view.finalized, ...view.ongoing];
+  const fixed = all.filter((e) => e.status === "fixed").length;
+  const failed = all.filter((e) => e.status === "escalated").length;
+  const passed = all.filter((e) => e.status === "passed").length;
+  const passedRuns = all
     .filter((e) => e.status === "passed")
     .reduce((acc, e) => acc + e.runs, 0);
 
