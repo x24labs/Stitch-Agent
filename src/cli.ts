@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { runDoctorCommand } from "./commands/doctor.js";
 import { runGenerateCommand } from "./commands/generate.js";
+import { runHistoryCommand } from "./commands/history.js";
 import { runRunCommand } from "./commands/run.js";
 
 const program = new Command();
@@ -85,6 +86,23 @@ program
   .option("--output <format>", "Output format (text|json)", "text")
   .action(async (opts) => {
     const code = await runDoctorCommand({ repo: opts.repo, output: opts.output });
+    process.exit(code);
+  });
+
+program
+  .command("history")
+  .description("Show recent run history (compacted by streak)")
+  .option("--repo <path>", "Repository root path", ".")
+  .option("--job <name>", "Filter to a single job name")
+  .option("--limit <n>", "Max finalized entries to show", (v) => Number.parseInt(v, 10), 50)
+  .option("--output <format>", "Output format (text|json)", "text")
+  .action(async (opts) => {
+    const code = await runHistoryCommand({
+      repo: opts.repo,
+      job: opts.job,
+      limit: opts.limit,
+      output: opts.output,
+    });
     process.exit(code);
   });
 

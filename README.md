@@ -131,6 +131,9 @@ stitch run claude --fail-fast              # stop after first failure
 stitch run codex                           # use OpenAI Codex CLI instead
 stitch doctor                              # diagnose your setup
 stitch doctor --output json                # machine-readable diagnostics
+stitch history                             # show recent runs (streak-compacted)
+stitch history --job lint --limit 20       # filter and limit
+stitch history --output json               # machine-readable
 ```
 
 Agents:
@@ -157,6 +160,18 @@ stitch run claude --jobs lint,test,typecheck
 ```
 
 Prefix matching: `--jobs test` matches `test`, `test:unit`, `test-e2e`, `test_fast`.
+
+## History
+
+Every run records its outcome to `.stitch/history.jsonl` (and a small `.stitch/history-head.json` index). Consecutive identical results for the same job are compacted into a single entry with a `runs` counter, so 100 green runs cost one line, not a hundred. A streak only flushes when the result changes (status, attempts, or first error line). Fixes are never collapsed: every successful AI fix gets its own entry with the commit SHA.
+
+The history files are safe to commit. They sync naturally across machines with the rest of the repo. The log rotates after 5,000 entries (one backup kept).
+
+```bash
+stitch history                # latest 50 streaks + ongoing
+stitch history --job test     # only one job
+stitch history --output json  # for scripts
+```
 
 ## Configuration (optional)
 

@@ -5,6 +5,7 @@ import { CIParseError, parseCIConfig } from "../core/ci-parser.js";
 import { ConfigError, type StitchConfig, loadConfig } from "../core/config.js";
 import { applyFilter, classifyWithLLM, loadCache, saveCache } from "../core/filter.js";
 import { commit, push, snapshot } from "../core/git.js";
+import { recordRun } from "../core/history.js";
 import type { CIJob, GitSnapshot } from "../core/models.js";
 import { type RunReport, isCommittable, isPushable } from "../core/models.js";
 import { Runner, type RunnerConfig } from "../core/runner.js";
@@ -167,7 +168,8 @@ async function runHeadless(
     const runner = new Runner(repoRoot, driver, config);
     const report = await runner.run(jobs);
     console.log(JSON.stringify(report.toDict(), null, 2));
-    autoCommitPush(repoRoot, snap, report, !opts.push);
+    const { sha } = autoCommitPush(repoRoot, snap, report, !opts.push);
+    recordRun(report, { repoRoot, agent: opts.agent, snap, commitSha: sha });
     return report.exitCode();
   }
 
@@ -302,6 +304,7 @@ export async function runRunCommand(rawOpts: RunOptions): Promise<number> {
     const runner = new Runner(repoRoot, driver, config, undefined, ui.callback);
     const report = await runner.run(jobs);
     const { sha, pushed } = autoCommitPush(repoRoot, currentSnap, report, noPush);
+    recordRun(report, { repoRoot, agent: opts.agent, snap: currentSnap, commitSha: sha });
     ui.markDone(report, sha, pushed);
     lastExitCode = report.exitCode();
   };
@@ -369,6 +372,8 @@ async function runWatchMode(
       ui.initJobs(jobs);
       const runner = new Runner(repoRoot, driver, config, undefined, ui.callback);
       const report = await runner.run(jobs);
+      const watchSnap = snapshot(repoRoot);
+      recordRun(report, { repoRoot, agent: opts.agent, snap: watchSnap, commitSha: null });
       ui.markDone(report, null, false);
     };
 
