@@ -74,6 +74,33 @@ stitch run claude
 
 Uses your existing CLI subscription (Claude Pro, ChatGPT Plus). Zero config by default; optional `.stitch.yml` for per-repo defaults (see [Configuration](#configuration-optional)).
 
+## Claude Code integration
+
+Stitch ships with a Claude Code skill. Install it once and Claude validates your code on its own, without you asking.
+
+The skill is wired to four moments where broken code tends to leak out:
+
+- **Before every push.** Ask Claude to push, commit, or open a PR, and Stitch runs first. If anything fails, Claude stops and tells you before the commit leaves your machine.
+- **At the end of a task.** When Claude finishes implementing a feature, fixing a bug, or refactoring, it runs Stitch as the last step before declaring the work done.
+- **Before marking a todo complete.** If a TodoWrite item touches code a pipeline would check, Claude runs Stitch first.
+- **When switching context.** If you pivot to a different change, Claude runs Stitch on the previous one so nothing broken is left behind.
+
+It also auto-triggers on natural-language mentions like *"validate this"*, *"check my code"*, *"run the CI"*, *"fix the pipeline"*, *"CI is failing"*, *"pre-push check"*. You can still invoke it explicitly with `/stitch`.
+
+Install from a local clone:
+
+```bash
+ln -s "$(pwd)/skills/stitch" ~/.claude/skills/stitch
+```
+
+Install from a global npm install:
+
+```bash
+ln -s "$(npm root -g)/stitch-agent/skills/stitch" ~/.claude/skills/stitch
+```
+
+After that, open Claude Code in any repo with a CI config and start working. You should not need to mention Stitch by name again.
+
 ## Features
 
 What Stitch actually does, end to end:
@@ -84,6 +111,7 @@ What Stitch actually does, end to end:
 - **Batch AI fixes.** When multiple jobs fail, Stitch sends *all* the failures to the agent in a single call. The agent sees the failures together, which means one fix can resolve correlated errors (a broken type that breaks both lint and typecheck, a missing import that breaks tests and build). One invocation, one edit pass, fewer tokens, fewer seconds.
 - **Re-verify, don't just re-report.** After the agent edits, Stitch re-runs the previously failed jobs to prove the fix actually worked. Up to `max_attempts` per job, configurable per repo.
 - **Pluggable agent CLI.** Works with Claude Code, Codex, and whatever you have a subscription for. No Anthropic or OpenAI API key required; Stitch just shells out to the agent you already pay for.
+- **Native Claude Code skill.** Ships with a Claude Code skill. Install it once and Claude validates your code on its own: before every push, at the end of a task, before marking a todo complete, and when switching context. No command, no prompt, no flag. See [Claude Code integration](#claude-code-integration).
 - **Live TUI.** OpenTUI-based terminal interface with per-job progress, logs on demand, and stage grouping. Renders on any terminal; no ANSI flicker.
 - **Auto commit and push on green.** When the fix-loop lands, Stitch commits the change with a sensible message and pushes to the remote, so the CI fix closes the loop on its own. Opt out with `--no-push` or `push: false` in `.stitch.yml`.
 - **Watch mode.** Re-runs your CI on every save, with a debounce you control. Reports only, never invokes the agent.
@@ -102,6 +130,7 @@ Other tools fix CI failures with AI. None of them work like Stitch.
 | Runs jobs locally | Yes | Cloud only | Cloud only | Containers |
 | Pluggable AI agent | Any CLI agent | Built-in only | Built-in only | Built-in only |
 | Requires new infra | No | SaaS account | Nx monorepo | Dagger SDK |
+| Native Claude Code integration | Yes, ships with a skill | No | No | No |
 | Pricing | Free (MIT) | From $20/user/mo | Nx Cloud plan | Free (OSS) |
 
 **Gitar** and **Nx Cloud** are cloud platforms. They intercept failures in remote CI, fix them, and push commits to your PR. Powerful, but you need their platform, and every fix attempt costs a remote CI cycle.
@@ -109,14 +138,6 @@ Other tools fix CI failures with AI. None of them work like Stitch.
 **Dagger** can run locally, but you rewrite your pipelines in their SDK. It does not read your existing `.gitlab-ci.yml` or GitHub Actions workflows.
 
 **Stitch** takes the CI config you already have, runs it on your machine in seconds, and hands failures to whichever AI agent CLI you prefer. No vendor lock-in, no rewrite, no waiting for remote runners.
-
-## Claude Code skill (recommended)
-
-Install the stitch skill so Claude Code validates your changes automatically before push, at the end of tasks, and when switching contexts.
-
-```bash
-ln -s /path/to/stitch/library/skills/stitch ~/.claude/skills/stitch
-```
 
 ## Usage
 
