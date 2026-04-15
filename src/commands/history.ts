@@ -52,7 +52,7 @@ function renderHeader(stats: HeaderStats): string {
   if (stats.fixed > 0) parts.push(`${dim("Fixed:")} ${fg(cPurple, String(stats.fixed))}`);
   if (stats.escalated > 0) parts.push(`${dim("Failed:")} ${fg(cRed, String(stats.escalated))}`);
   const info = parts.join(dim("  \u00b7  "));
-  return `\n${logo}\n\n  ${info}\n`;
+  return `\n${logo}\n\n ${info}\n`;
 }
 
 function repoLabel(repoRoot: string): string {
