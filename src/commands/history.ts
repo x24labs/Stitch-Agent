@@ -28,6 +28,16 @@ function pad(s: string, n: number): string {
   return s.length >= n ? s.slice(0, n) : s + " ".repeat(n - s.length);
 }
 
+const STITCH_LOGO = [
+  " █▀▀ ▀█▀ █ ▀█▀ █▀▀ █ █",
+  "  ▄▄█  █  █  █  █▄▄ █▀█",
+];
+
+function renderHeader(subtitle: string): string {
+  const logo = STITCH_LOGO.map((l) => `  ${fg(cCyan, l)}`).join("\n");
+  return `\n${logo}\n\n  ${dim(subtitle)}\n`;
+}
+
 function statusIcon(s: HistoryStatus): string {
   switch (s) {
     case "passed":
@@ -86,7 +96,7 @@ export async function runHistoryCommand(opts: HistoryOptions): Promise<number> {
 
   if (view.finalized.length === 0 && view.ongoing.length === 0) {
     process.stdout.write(
-      `\n  ${fg(cCyan, bold("STITCH"))} ${dim("History")}\n\n  ${dim("No runs recorded yet. Run `stitch run` first.")}\n\n`,
+      `${renderHeader("History")}\n  ${dim("No runs recorded yet. Run `stitch run` first.")}\n\n`,
     );
     return 0;
   }
@@ -94,7 +104,7 @@ export async function runHistoryCommand(opts: HistoryOptions): Promise<number> {
   const refMs = Date.now();
   const line = dim("\u2500".repeat(72));
 
-  process.stdout.write(`\n  ${fg(cCyan, bold("STITCH"))} ${dim("History")}\n\n  ${line}\n`);
+  process.stdout.write(`${renderHeader("History")}\n  ${line}\n`);
   for (const e of view.finalized) {
     process.stdout.write(`${renderRow(e, false, refMs)}\n`);
   }
