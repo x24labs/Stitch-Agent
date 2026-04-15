@@ -120,15 +120,12 @@ export async function runHistoryCommand(opts: HistoryOptions): Promise<number> {
   const fixed = all.filter((e) => e.status === "fixed").length;
   const failed = all.filter((e) => e.status === "escalated").length;
   const passed = all.filter((e) => e.status === "passed").length;
-  const passedRuns = all
-    .filter((e) => e.status === "passed")
-    .reduce((acc, e) => acc + e.runs, 0);
+  const passedRuns = all.filter((e) => e.status === "passed").reduce((acc, e) => acc + e.runs, 0);
   const totalRuns = all.reduce((acc, e) => acc + e.runs, 0);
   const distinctJobs = new Set(all.map((e) => e.job)).size;
   const latestAgent =
-    [...view.ongoing, ...view.finalized]
-      .map((e) => e.agent)
-      .find((a): a is string => Boolean(a)) ?? null;
+    [...view.ongoing, ...view.finalized].map((e) => e.agent).find((a): a is string => Boolean(a)) ??
+    null;
 
   const stats: HeaderStats = {
     agent: latestAgent,
