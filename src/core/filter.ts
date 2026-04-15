@@ -8,7 +8,7 @@ import type { CIJob } from "./models.js";
 const CACHE_DIR = ".stitch";
 const CACHE_FILE = "jobs.json";
 
-export interface FilterConfig {
+interface FilterConfig {
   only: string[] | null;
   exclude?: string[] | null;
 }

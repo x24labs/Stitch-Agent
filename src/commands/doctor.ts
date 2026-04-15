@@ -12,14 +12,14 @@ import { detectPlatform } from "../core/ci-detect.js";
 import { parseCIConfig } from "../core/ci-parser.js";
 import { which } from "../util.js";
 
-export interface DoctorOptions {
+interface DoctorOptions {
   repo: string;
   output: string;
 }
 
-export type CheckStatus = "pass" | "fail" | "warn" | "skip";
+type CheckStatus = "pass" | "fail" | "warn" | "skip";
 
-export interface CheckResult {
+interface CheckResult {
   name: string;
   status: CheckStatus;
   message: string;

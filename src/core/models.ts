@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 export type JobStatus = "passed" | "escalated" | "skipped" | "not_run" | "failed";
 
 export interface CIJob {
@@ -109,18 +107,3 @@ export class RunReport {
   }
 }
 
-// Zod schemas for external data validation
-
-export const CIJobSchema = z.object({
-  name: z.string(),
-  stage: z.string(),
-  script: z.array(z.string()),
-  image: z.string().nullable(),
-  sourceFile: z.string(),
-  skipReason: z.string().nullable(),
-});
-
-export const ClassificationCacheSchema = z.object({
-  hash: z.string(),
-  jobs: z.record(z.enum(["verify", "infra"])),
-});
