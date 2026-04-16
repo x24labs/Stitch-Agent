@@ -1,5 +1,7 @@
+/** Outcome of a single job execution. */
 export type JobStatus = "passed" | "escalated" | "skipped" | "not_run" | "failed";
 
+/** A CI job parsed from `.gitlab-ci.yml` or similar config. */
 export interface CIJob {
   name: string;
   stage: string;
@@ -9,6 +11,7 @@ export interface CIJob {
   skipReason: string | null;
 }
 
+/** Input passed to an agent driver when requesting a fix. */
 export interface FixContext {
   repoRoot: string;
   jobName: string;
@@ -19,12 +22,14 @@ export interface FixContext {
   promptOverride: string | null;
 }
 
+/** Result returned by an agent driver after a fix attempt. */
 export interface FixOutcome {
   applied: boolean;
   reason: string;
   driverLog: string;
 }
 
+/** Final result of running a single job through the fix loop. */
 export interface JobResult {
   name: string;
   status: JobStatus;
@@ -34,6 +39,7 @@ export interface JobResult {
   skipReason: string | null;
 }
 
+/** Output from executing a shell command locally. */
 export interface ExecResult {
   log: string;
   exitCode: number;
@@ -42,6 +48,7 @@ export interface ExecResult {
   cancelled?: boolean;
 }
 
+/** Point-in-time snapshot of the repository's git state. */
 export interface GitSnapshot {
   clean: boolean;
   branch: string | null;
@@ -49,25 +56,30 @@ export interface GitSnapshot {
   ahead: number;
 }
 
+/** Outcome of a `git commit` operation. */
 export interface CommitResult {
   ok: boolean;
   sha: string;
   message: string;
 }
 
+/** Outcome of a `git push` operation. */
 export interface PushResult {
   ok: boolean;
   error: string;
 }
 
+/** True when the working tree is clean and on a named branch. */
 export function isCommittable(snap: GitSnapshot): boolean {
   return snap.clean && snap.branch !== null;
 }
 
+/** True when committable and not ahead of the remote tracking branch. */
 export function isPushable(snap: GitSnapshot): boolean {
   return isCommittable(snap) && !(snap.hasRemote && snap.ahead > 0);
 }
 
+/** Aggregated results from a full `stitch run` invocation. */
 export class RunReport {
   jobs: JobResult[];
   agent: string;
