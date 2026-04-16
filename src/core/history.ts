@@ -10,7 +10,7 @@ import {
 import { dirname, join } from "node:path";
 import type { GitSnapshot, JobResult, RunReport } from "./models.js";
 
-export const HISTORY_SCHEMA_VERSION = 1;
+const HISTORY_SCHEMA_VERSION = 1;
 export const ROTATE_LINE_THRESHOLD = 5_000;
 const HISTORY_DIR = ".stitch";
 const HISTORY_FILE = "history.jsonl";
@@ -144,7 +144,7 @@ function streakMatches(prev: HistoryEntry, next: HistoryEntry): boolean {
   );
 }
 
-export interface RecordContext {
+interface RecordContext {
   repoRoot: string;
   agent: string;
   snap: GitSnapshot;
@@ -178,12 +178,12 @@ export function recordRun(report: RunReport, ctx: RecordContext): void {
   writeHead(paths.head, head);
 }
 
-export interface ReadOptions {
+interface ReadOptions {
   job?: string;
   limit?: number;
 }
 
-export interface HistoryView {
+interface HistoryView {
   finalized: HistoryEntry[];
   ongoing: HistoryEntry[];
 }

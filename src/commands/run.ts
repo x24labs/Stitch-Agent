@@ -19,7 +19,7 @@ import { ClaudeCodeDriver } from "../drivers/claude-code.js";
 import { CodexDriver } from "../drivers/codex.js";
 import type { AgentDriver } from "../drivers/types.js";
 
-export interface RunOptions {
+interface RunOptions {
   agent: string;
   repo: string;
   maxAttempts?: number;

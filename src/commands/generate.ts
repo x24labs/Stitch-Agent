@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { analyzeRepo, repoContextSummary } from "../core/repo-context.js";
 import { which } from "../util.js";
 
-export interface GenerateOptions {
+interface GenerateOptions {
   agent: string;
   repo: string;
   output: string;

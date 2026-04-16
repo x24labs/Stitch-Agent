@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { type HistoryEntry, type HistoryStatus, readHistory } from "../core/history.js";
 
-export interface HistoryOptions {
+interface HistoryOptions {
   repo: string;
   job?: string;
   limit: number;

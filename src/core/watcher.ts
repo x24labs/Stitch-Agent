@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { join, relative } from "node:path";
 
-export const IGNORE_DIRS = new Set([
+const IGNORE_DIRS = new Set([
   ".git",
   ".venv",
   "venv",
@@ -42,9 +42,9 @@ export const IGNORE_DIRS = new Set([
   ".angular",
 ]);
 
-export const IGNORE_FILES = new Set([".stitch.lock", ".DS_Store", "Thumbs.db"]);
+const IGNORE_FILES = new Set([".stitch.lock", ".DS_Store", "Thumbs.db"]);
 
-export const KEEP_HIDDEN = new Set([".gitlab-ci.yml", ".github", ".gitignore"]);
+const KEEP_HIDDEN = new Set([".gitlab-ci.yml", ".github", ".gitignore"]);
 
 function isIgnoredPart(part: string): boolean {
   if (IGNORE_DIRS.has(part)) return true;

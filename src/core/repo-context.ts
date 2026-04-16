@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-export interface RepoContext {
+interface RepoContext {
   languages: string[];
   packageManager: string | null;
   frameworks: string[];
