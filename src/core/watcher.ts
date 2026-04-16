@@ -120,7 +120,7 @@ export interface WatchConfig {
 }
 
 const DEFAULT_WATCH_CONFIG: WatchConfig = {
-  debounceSeconds: 3.0,
+  debounceSeconds: 30,
   pollInterval: 1.0,
 };
 

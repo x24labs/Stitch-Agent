@@ -35,12 +35,12 @@ program
   )
   .option("--jobs <list>", "Comma-separated allowlist of job names to run")
   .option("--no-push", "Commit fixes locally but skip pushing to remote")
-  .option("--watch", "Watch mode: re-run on file changes, no fixes", false)
+  .option("--watch", "Watch mode: re-run on file changes", false)
   .option(
     "--debounce <seconds>",
     "Seconds of quiet before re-running in watch mode",
     (v) => Number.parseFloat(v),
-    3.0,
+    30,
   )
   .action(async (agent, opts, cmd) => {
     const fromCli = <T>(key: string, val: T): T | undefined => {
