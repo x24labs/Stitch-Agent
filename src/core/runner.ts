@@ -4,7 +4,7 @@ import { LocalExecutor } from "./executor.js";
 import type { CIJob, ExecResult, FixContext, JobResult } from "./models.js";
 import { RunReport } from "./models.js";
 
-export interface JobExecutor {
+interface JobExecutor {
   runJob(job: CIJob, signal?: AbortSignal): Promise<ExecResult>;
 }
 
