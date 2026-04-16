@@ -374,7 +374,7 @@ async function runWatchMode(
     return 0;
   }
 
-  const config: Partial<RunnerConfig> = { maxAttempts: 1, failFast: false };
+  const config: Partial<RunnerConfig> = { maxAttempts: opts.maxAttempts, failFast: opts.failFast };
   const { StitchUI } = await import("../core/ui/run-ui.js");
   const ui = new StitchUI(opts.agent, repoRoot);
   const watchCfg: Partial<WatchConfig> = { debounceSeconds: opts.debounce };
