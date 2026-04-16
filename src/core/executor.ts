@@ -47,8 +47,13 @@ function runShellCommand(
     let done = false;
 
     const kill = () => {
+      const pid = proc.pid;
+      if (pid === undefined) {
+        proc.kill("SIGKILL");
+        return;
+      }
       try {
-        process.kill(-proc.pid!, "SIGKILL");
+        process.kill(-pid, "SIGKILL");
       } catch {
         proc.kill("SIGKILL");
       }

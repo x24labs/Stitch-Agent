@@ -4,6 +4,10 @@ import { LocalExecutor } from "./executor.js";
 import type { CIJob, ExecResult, FixContext, JobResult } from "./models.js";
 import { RunReport } from "./models.js";
 
+interface JobExecutor {
+  runJob(job: CIJob, signal?: AbortSignal): Promise<ExecResult>;
+}
+
 const ERROR_LOG_TAIL_CHARS = 4_000;
 
 export interface RunnerCallback {
@@ -34,18 +38,29 @@ const DEFAULT_CONFIG: RunnerConfig = {
   jobTimeoutSeconds: 300,
 };
 
+function notRunResult(name: string): JobResult {
+  return {
+    name,
+    status: "not_run",
+    attempts: 0,
+    driver: null,
+    errorLog: "",
+    skipReason: null,
+  };
+}
+
 export class Runner {
   private repoRoot: string;
   private driver: AgentDriver;
   private config: RunnerConfig;
-  private executor: LocalExecutor;
+  private executor: JobExecutor;
   private cb: RunnerCallback;
 
   constructor(
     repoRoot: string,
     driver: AgentDriver,
     config?: Partial<RunnerConfig>,
-    executor?: LocalExecutor,
+    executor?: JobExecutor,
     callback?: RunnerCallback,
   ) {
     this.repoRoot = repoRoot;
@@ -57,35 +72,11 @@ export class Runner {
 
   async run(jobs: CIJob[], dryRun = false): Promise<RunReport> {
     const results = new Map<string, JobResult>();
-    const runnable: CIJob[] = [];
-
-    for (const job of jobs) {
-      if (job.skipReason) {
-        results.set(job.name, {
-          name: job.name,
-          status: "skipped",
-          attempts: 0,
-          driver: null,
-          errorLog: "",
-          skipReason: job.skipReason,
-        });
-      } else if (dryRun) {
-        results.set(job.name, {
-          name: job.name,
-          status: "not_run",
-          attempts: 0,
-          driver: null,
-          errorLog: "",
-          skipReason: null,
-        });
-      } else {
-        runnable.push(job);
-      }
-    }
+    const runnable = this.partitionJobs(jobs, dryRun, results);
 
     if (runnable.length === 0) {
       return new RunReport(
-        jobs.map((j) => results.get(j.name)!),
+        jobs.map((j) => results.get(j.name) ?? notRunResult(j.name)),
         this.driver.name,
       );
     }
@@ -99,29 +90,7 @@ export class Runner {
       const useFailFast = this.config.failFast && attempt < this.config.maxAttempts;
       const execResults = await this.runJobsParallel(pending, attempt, useFailFast);
 
-      const failed: [CIJob, string][] = [];
-      const cancelled: CIJob[] = [];
-      for (const job of pending) {
-        const er = execResults.get(job.name)!;
-        if (er.cancelled) {
-          cancelled.push(job);
-          continue;
-        }
-        if (er.exitCode === 0) {
-          const result: JobResult = {
-            name: job.name,
-            status: "passed",
-            attempts: attempt,
-            driver: null,
-            errorLog: "",
-            skipReason: null,
-          };
-          results.set(job.name, result);
-          this.cb.jobFinished(job.name, result);
-        } else {
-          failed.push([job, er.log]);
-        }
-      }
+      const { failed, cancelled } = this.classifyResults(pending, execResults, attempt, results);
 
       if (failed.length === 0 && cancelled.length === 0) break;
       if (failed.length === 0) {
@@ -131,20 +100,8 @@ export class Runner {
         continue;
       }
 
-      // Last attempt: escalate
       if (attempt >= this.config.maxAttempts) {
-        for (const [job, log] of failed) {
-          const result: JobResult = {
-            name: job.name,
-            status: "escalated",
-            attempts: attempt,
-            driver: this.driver.name,
-            errorLog: log.slice(-ERROR_LOG_TAIL_CHARS),
-            skipReason: null,
-          };
-          results.set(job.name, result);
-          this.cb.jobFinished(job.name, result);
-        }
+        this.escalateJobs(failed, attempt, results);
         break;
       }
 
@@ -172,19 +129,7 @@ export class Runner {
       this.driver.onOutput = null;
 
       if (!outcome.applied) {
-        const reason = outcome.reason || "driver did not apply a fix";
-        for (const [job, log] of failed) {
-          const result: JobResult = {
-            name: job.name,
-            status: "escalated",
-            attempts: attempt,
-            driver: this.driver.name,
-            errorLog: `[driver: ${reason}]\n\n${log.slice(-ERROR_LOG_TAIL_CHARS)}`,
-            skipReason: null,
-          };
-          results.set(job.name, result);
-          this.cb.jobFinished(job.name, result);
-        }
+        this.escalateJobs(failed, attempt, results, outcome.reason);
         break;
       }
 
@@ -193,18 +138,7 @@ export class Runner {
     }
 
     // Preserve original order
-    const ordered = jobs.map(
-      (j) =>
-        results.get(j.name) ?? {
-          name: j.name,
-          status: "not_run" as const,
-          attempts: 0,
-          driver: null,
-          errorLog: "",
-          skipReason: null,
-        },
-    );
-
+    const ordered = jobs.map((j) => results.get(j.name) ?? notRunResult(j.name));
     return new RunReport(ordered, this.driver.name);
   }
 
@@ -234,10 +168,86 @@ export class Runner {
     return new Map(pairs);
   }
 
-  private makeBatchContext(contexts: FixContext[]): FixContext {
-    if (contexts.length === 1) return contexts[0]!;
+  private classifyResults(
+    pending: CIJob[],
+    execResults: Map<string, ExecResult>,
+    attempt: number,
+    results: Map<string, JobResult>,
+  ): { failed: [CIJob, string][]; cancelled: CIJob[] } {
+    const failed: [CIJob, string][] = [];
+    const cancelled: CIJob[] = [];
+    for (const job of pending) {
+      const er = execResults.get(job.name);
+      if (!er) continue;
+      if (er.cancelled) {
+        cancelled.push(job);
+        continue;
+      }
+      if (er.exitCode === 0) {
+        const result: JobResult = {
+          name: job.name,
+          status: "passed",
+          attempts: attempt,
+          driver: null,
+          errorLog: "",
+          skipReason: null,
+        };
+        results.set(job.name, result);
+        this.cb.jobFinished(job.name, result);
+      } else {
+        failed.push([job, er.log]);
+      }
+    }
+    return { failed, cancelled };
+  }
 
-    const first = contexts[0]!;
+  private escalateJobs(
+    failed: [CIJob, string][],
+    attempt: number,
+    results: Map<string, JobResult>,
+    driverReason?: string,
+  ): void {
+    for (const [job, log] of failed) {
+      const prefix = driverReason ? `[driver: ${driverReason}]\n\n` : "";
+      const result: JobResult = {
+        name: job.name,
+        status: "escalated",
+        attempts: attempt,
+        driver: this.driver.name,
+        errorLog: `${prefix}${log.slice(-ERROR_LOG_TAIL_CHARS)}`,
+        skipReason: null,
+      };
+      results.set(job.name, result);
+      this.cb.jobFinished(job.name, result);
+    }
+  }
+
+  private partitionJobs(jobs: CIJob[], dryRun: boolean, results: Map<string, JobResult>): CIJob[] {
+    const runnable: CIJob[] = [];
+    for (const job of jobs) {
+      if (job.skipReason) {
+        results.set(job.name, {
+          name: job.name,
+          status: "skipped",
+          attempts: 0,
+          driver: null,
+          errorLog: "",
+          skipReason: job.skipReason,
+        });
+      } else if (dryRun) {
+        results.set(job.name, notRunResult(job.name));
+      } else {
+        runnable.push(job);
+      }
+    }
+    return runnable;
+  }
+
+  private makeBatchContext(contexts: FixContext[]): FixContext {
+    const [first, ...rest] = contexts;
+    if (!first) throw new Error("makeBatchContext called with empty contexts");
+    if (rest.length === 0) return first;
+
     const prompt = buildBatchPrompt(contexts);
     return {
       repoRoot: first.repoRoot,

@@ -104,7 +104,8 @@ function countLines(path: string): number {
 function firstLine(text: string): string | null {
   const t = text.trim();
   if (!t) return null;
-  return t.split("\n", 1)[0]!.slice(0, 200);
+  const head = t.split("\n", 1)[0] ?? "";
+  return head.slice(0, 200);
 }
 
 function classify(result: JobResult): HistoryStatus | null {
@@ -188,24 +189,26 @@ interface HistoryView {
   ongoing: HistoryEntry[];
 }
 
+function parseLogFile(file: string): HistoryEntry[] {
+  if (!existsSync(file)) return [];
+  const entries: HistoryEntry[] = [];
+  for (const line of readFileSync(file, "utf-8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line) as HistoryEntry;
+      if (parsed.v === HISTORY_SCHEMA_VERSION) entries.push(parsed);
+    } catch {
+      // Skip corrupt lines silently
+    }
+  }
+  return entries;
+}
+
 export function readHistory(repoRoot: string, opts: ReadOptions = {}): HistoryView {
   const paths = historyPaths(repoRoot);
   const head = readHead(paths.head);
 
-  const finalized: HistoryEntry[] = [];
-  for (const file of [paths.backup, paths.log]) {
-    if (!existsSync(file)) continue;
-    for (const line of readFileSync(file, "utf-8").split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        const parsed = JSON.parse(line) as HistoryEntry;
-        if (parsed.v === HISTORY_SCHEMA_VERSION) finalized.push(parsed);
-      } catch {
-        // Skip corrupt lines silently
-      }
-    }
-  }
-
+  const finalized = [...parseLogFile(paths.backup), ...parseLogFile(paths.log)];
   let ongoing = Object.values(head.jobs);
 
   let filtered = finalized;
@@ -220,6 +223,5 @@ export function readHistory(repoRoot: string, opts: ReadOptions = {}): HistoryVi
   }
 
   ongoing.sort((a, b) => a.job.localeCompare(b.job));
-
   return { finalized: filtered, ongoing };
 }

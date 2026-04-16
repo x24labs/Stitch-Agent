@@ -11,7 +11,7 @@ function runner(
     "/tmp/repo",
     driver,
     { maxAttempts: opts.maxAttempts ?? 3, failFast: opts.failFast ?? false },
-    executor as any,
+    executor,
   );
 }
 

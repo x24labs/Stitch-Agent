@@ -60,50 +60,57 @@ export function shouldIgnore(filePath: string, repoRoot: string): boolean {
     return true;
   }
   const parts = rel.split("/").filter((p) => p.length > 0);
-  if (parts.length === 0) return false;
+  const last = parts[parts.length - 1];
+  if (!last) return false;
 
-  // Check directory segments (all except last)
-  for (let i = 0; i < parts.length - 1; i++) {
-    if (isIgnoredPart(parts[i]!)) return true;
+  for (const part of parts.slice(0, -1)) {
+    if (isIgnoredPart(part)) return true;
   }
 
-  const last = parts[parts.length - 1]!;
   if (IGNORE_FILES.has(last)) return true;
   if (KEEP_HIDDEN.has(last)) return false;
   return last.startsWith(".");
 }
 
+function isTrackedFile(name: string): boolean {
+  if (IGNORE_FILES.has(name)) return false;
+  if (name.startsWith(".") && !KEEP_HIDDEN.has(name)) return false;
+  return true;
+}
+
+function scanDirectory(
+  dir: string,
+  repoRoot: string,
+  snap: Map<string, [number, number]>,
+  stack: string[],
+): void {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    const full = join(dir, name);
+    try {
+      const st = statSync(full);
+      if (st.isDirectory()) {
+        if (!isIgnoredPart(name)) stack.push(full);
+      } else if (st.isFile() && isTrackedFile(name)) {
+        snap.set(relative(repoRoot, full), [st.mtimeMs, st.size]);
+      }
+    } catch {}
+  }
+}
+
 export function fileSnapshot(repoRoot: string): Map<string, [number, number]> {
   const snap = new Map<string, [number, number]>();
   const stack = [repoRoot];
-
   while (stack.length > 0) {
-    const current = stack.pop()!;
-    let entries: string[];
-    try {
-      entries = readdirSync(current);
-    } catch {
-      continue;
-    }
-
-    for (const name of entries) {
-      const full = join(current, name);
-      try {
-        const st = statSync(full);
-        if (st.isDirectory()) {
-          if (isIgnoredPart(name)) continue;
-          stack.push(full);
-          continue;
-        }
-        if (!st.isFile()) continue;
-        if (IGNORE_FILES.has(name)) continue;
-        if (name.startsWith(".") && !KEEP_HIDDEN.has(name)) continue;
-        const rel = relative(repoRoot, full);
-        snap.set(rel, [st.mtimeMs, st.size]);
-      } catch {}
-    }
+    const current = stack.pop();
+    if (current === undefined) break;
+    scanDirectory(current, repoRoot, snap, stack);
   }
-
   return snap;
 }
 
@@ -113,7 +120,7 @@ export interface WatchConfig {
 }
 
 const DEFAULT_WATCH_CONFIG: WatchConfig = {
-  debounceSeconds: 3.0,
+  debounceSeconds: 30,
   pollInterval: 1.0,
 };
 

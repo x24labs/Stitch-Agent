@@ -8,13 +8,12 @@ export function buildBatchPrompt(contexts: FixContext[]): string {
     "Multiple local CI jobs failed. Fix ALL of them so every command passes.\n\n## Failing jobs\n\n",
   ];
 
-  for (let i = 0; i < contexts.length; i++) {
-    const ctx = contexts[i]!;
+  contexts.forEach((ctx, i) => {
     const logTail = ctx.errorLog.slice(-perJobChars);
     parts.push(
       `### ${i + 1}. ${ctx.jobName}\nCommand: ${ctx.command}\n\`\`\`\n${logTail}\n\`\`\`\n\n`,
     );
-  }
+  });
 
   parts.push(
     `## Instructions\n- The failures above may share a common root cause, look for that first\n- Fix only what's needed to make ALL commands pass\n- Do not break other passing tests\n- If a failure requires environment changes and cannot be fixed in code, say so explicitly\n- When you believe all fixes are complete, stop and explain what you changed\n\nWorking directory: ${contexts[0]?.repoRoot}\n`,

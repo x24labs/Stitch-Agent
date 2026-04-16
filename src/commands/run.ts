@@ -100,15 +100,10 @@ function autoCommitPush(
   return { sha: cr.sha, pushed };
 }
 
-async function runHeadless(
-  opts: ResolvedOptions,
-  repoRoot: string,
-  driver: AgentDriver,
-): Promise<number> {
+async function parseJobs(repoRoot: string): Promise<CIJob[] | 2> {
   const platform = detectPlatform(repoRoot);
-  let allJobs: CIJob[];
   try {
-    allJobs = parseCIConfig(repoRoot, platform);
+    return parseCIConfig(repoRoot, platform);
   } catch (err) {
     if (err instanceof CIParseError) {
       console.error(`Error parsing CI config: ${err.message}`);
@@ -116,6 +111,33 @@ async function runHeadless(
     }
     throw err;
   }
+}
+
+async function classifyJobs(
+  allJobs: CIJob[],
+  opts: ResolvedOptions,
+  repoRoot: string,
+): Promise<Record<string, string> | null> {
+  const jobNames = allJobs.map((j) => j.name);
+  let classifications = loadCache(repoRoot, jobNames);
+  if (!classifications) {
+    console.log(`STITCH: classifying jobs with ${opts.agent}...`);
+    classifications = await classifyWithLLM(jobNames, opts.agent, repoRoot);
+    if (classifications) {
+      saveCache(repoRoot, jobNames, classifications);
+    }
+  }
+  return classifications;
+}
+
+async function runHeadless(
+  opts: ResolvedOptions,
+  repoRoot: string,
+  driver: AgentDriver,
+): Promise<number> {
+  const jobsOrCode = await parseJobs(repoRoot);
+  if (jobsOrCode === 2) return 2;
+  const allJobs = jobsOrCode;
 
   if (allJobs.length === 0) {
     const msg =
@@ -140,15 +162,7 @@ async function runHeadless(
   };
 
   if (!filterCfg.only && opts.classification === "llm") {
-    const jobNames = allJobs.map((j) => j.name);
-    classifications = loadCache(repoRoot, jobNames);
-    if (!classifications) {
-      console.log(`STITCH: classifying jobs with ${opts.agent}...`);
-      classifications = await classifyWithLLM(jobNames, opts.agent, repoRoot);
-      if (classifications) {
-        saveCache(repoRoot, jobNames, classifications);
-      }
-    }
+    classifications = await classifyJobs(allJobs, opts, repoRoot);
   }
 
   const jobs = applyFilter(allJobs, filterCfg, classifications);
@@ -193,64 +207,28 @@ function printDryRun(jobs: CIJob[]): void {
   }
 }
 
-export async function runRunCommand(rawOpts: RunOptions): Promise<number> {
-  const repoRoot = resolve(rawOpts.repo);
-  if (!existsSync(repoRoot)) {
-    console.error(`Error: repo path not found: ${repoRoot}`);
-    return 2;
-  }
-
-  let fileConfig: StitchConfig | null;
+function loadConfigSafe(repoRoot: string): StitchConfig | null | 2 {
   try {
-    fileConfig = loadConfig(repoRoot);
+    return loadConfig(repoRoot);
   } catch (err) {
     if (err instanceof ConfigError) {
-      console.error(err.message);
+      console.error((err as ConfigError).message);
       return 2;
     }
     throw err;
   }
+}
 
-  // agent: CLI positional takes precedence, then config, then no further default
-  const agent = rawOpts.agent || fileConfig?.agent || "claude";
-  const opts = resolveOptions({ ...rawOpts, agent }, fileConfig);
+async function parseJobsSafe(repoRoot: string): Promise<CIJob[] | 2> {
+  return parseJobs(repoRoot);
+}
 
-  if (!VALID_AGENTS.includes(opts.agent)) {
-    console.error(`Unknown agent: ${opts.agent}. Valid: ${VALID_AGENTS.join(", ")}`);
-    return 2;
-  }
-
-  const driver = buildDriver(opts.agent);
-  if (!driver) {
-    console.error(`Unknown agent: ${opts.agent}`);
-    return 2;
-  }
-
-  // For non-TUI modes (dry-run, json, watch), parse inline
-  if (opts.dryRun || opts.output === "json" || opts.watch) {
-    return runHeadless(opts, repoRoot, driver);
-  }
-
-  // ── Pre-TUI checks (before loading OpenTUI) ──────────────
-  const platform = detectPlatform(repoRoot);
-  let allJobs: CIJob[];
-  try {
-    allJobs = parseCIConfig(repoRoot, platform);
-  } catch (err) {
-    if (err instanceof CIParseError) {
-      console.error(`Error parsing CI config: ${err.message}`);
-      return 2;
-    }
-    throw err;
-  }
-
-  if (allJobs.length === 0) {
-    console.log(
-      "No CI configuration found (.gitlab-ci.yml, .github/workflows/, or bitbucket-pipelines.yml)",
-    );
-    return 0;
-  }
-
+async function runTuiMode(
+  opts: ResolvedOptions,
+  repoRoot: string,
+  driver: AgentDriver,
+  allJobs: CIJob[],
+): Promise<number> {
   // ── TUI mode: jobs found, launch UI ──────────────────────
   // Lazy import: @opentui/core uses bun:ffi, only load when TUI is needed
   const { StitchUI } = await import("../core/ui/run-ui.js");
@@ -295,6 +273,7 @@ export async function runRunCommand(rawOpts: RunOptions): Promise<number> {
     maxAttempts: opts.maxAttempts,
     failFast: opts.failFast,
   };
+  const platform = detectPlatform(repoRoot);
 
   let lastExitCode = 0;
 
@@ -337,6 +316,52 @@ export async function runRunCommand(rawOpts: RunOptions): Promise<number> {
   return lastExitCode;
 }
 
+export async function runRunCommand(rawOpts: RunOptions): Promise<number> {
+  const repoRoot = resolve(rawOpts.repo);
+  if (!existsSync(repoRoot)) {
+    console.error(`Error: repo path not found: ${repoRoot}`);
+    return 2;
+  }
+
+  const fileConfigOrCode = loadConfigSafe(repoRoot);
+  if (fileConfigOrCode === 2) return 2;
+  const fileConfig = fileConfigOrCode;
+
+  // agent: CLI positional takes precedence, then config, then no further default
+  const agent = rawOpts.agent || fileConfig?.agent || "claude";
+  const opts = resolveOptions({ ...rawOpts, agent }, fileConfig);
+
+  if (!VALID_AGENTS.includes(opts.agent)) {
+    console.error(`Unknown agent: ${opts.agent}. Valid: ${VALID_AGENTS.join(", ")}`);
+    return 2;
+  }
+
+  const driver = buildDriver(opts.agent);
+  if (!driver) {
+    console.error(`Unknown agent: ${opts.agent}`);
+    return 2;
+  }
+
+  // For non-TUI modes (dry-run, json, watch), parse inline
+  if (opts.dryRun || opts.output === "json" || opts.watch) {
+    return runHeadless(opts, repoRoot, driver);
+  }
+
+  // ── Pre-TUI checks (before loading OpenTUI) ──────────────
+  const allJobsOrCode = await parseJobsSafe(repoRoot);
+  if (allJobsOrCode === 2) return 2;
+  const allJobs = allJobsOrCode;
+
+  if (allJobs.length === 0) {
+    console.log(
+      "No CI configuration found (.gitlab-ci.yml, .github/workflows/, or bitbucket-pipelines.yml)",
+    );
+    return 0;
+  }
+
+  return runTuiMode(opts, repoRoot, driver, allJobs);
+}
+
 async function runWatchMode(
   repoRoot: string,
   driver: AgentDriver,
@@ -349,7 +374,7 @@ async function runWatchMode(
     return 0;
   }
 
-  const config: Partial<RunnerConfig> = { maxAttempts: 1, failFast: false };
+  const config: Partial<RunnerConfig> = { maxAttempts: opts.maxAttempts, failFast: opts.failFast };
   const { StitchUI } = await import("../core/ui/run-ui.js");
   const ui = new StitchUI(opts.agent, repoRoot);
   const watchCfg: Partial<WatchConfig> = { debounceSeconds: opts.debounce };

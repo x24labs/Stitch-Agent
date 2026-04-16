@@ -28,38 +28,37 @@ const DEFAULT_GITLAB_STAGES = [".pre", "build", "test", "deploy", ".post"];
 
 export function parseCIConfig(repoRoot: string, platform: CIPlatform = "unknown"): CIJob[] {
   const jobs: CIJob[] = [];
-
-  const parseGitlab = platform === "gitlab" || platform === "unknown";
-  const parseGithub = platform === "github" || platform === "unknown";
-  const parseBitbucket = platform === "bitbucket" || platform === "unknown";
-
-  if (parseGitlab) {
-    const glPath = join(repoRoot, ".gitlab-ci.yml");
-    if (existsSync(glPath)) {
-      jobs.push(...parseGitlabCI(glPath));
-    }
+  if (platform === "gitlab" || platform === "unknown") {
+    collectGitlab(repoRoot, jobs);
   }
-
-  if (parseGithub) {
-    const ghDir = join(repoRoot, ".github", "workflows");
-    if (existsSync(ghDir) && statSync(ghDir).isDirectory()) {
-      const files = readdirSync(ghDir)
-        .filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))
-        .sort();
-      for (const file of files) {
-        jobs.push(...parseGithubWorkflow(join(ghDir, file)));
-      }
-    }
+  if (platform === "github" || platform === "unknown") {
+    collectGithub(repoRoot, jobs);
   }
-
-  if (parseBitbucket) {
-    const bbPath = join(repoRoot, "bitbucket-pipelines.yml");
-    if (existsSync(bbPath)) {
-      jobs.push(...parseBitbucketPipelines(bbPath));
-    }
+  if (platform === "bitbucket" || platform === "unknown") {
+    collectBitbucket(repoRoot, jobs);
   }
-
   return jobs;
+}
+
+function collectGitlab(repoRoot: string, jobs: CIJob[]): void {
+  const glPath = join(repoRoot, ".gitlab-ci.yml");
+  if (existsSync(glPath)) jobs.push(...parseGitlabCI(glPath));
+}
+
+function collectGithub(repoRoot: string, jobs: CIJob[]): void {
+  const ghDir = join(repoRoot, ".github", "workflows");
+  if (!existsSync(ghDir) || !statSync(ghDir).isDirectory()) return;
+  const files = readdirSync(ghDir)
+    .filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))
+    .sort();
+  for (const file of files) {
+    jobs.push(...parseGithubWorkflow(join(ghDir, file)));
+  }
+}
+
+function collectBitbucket(repoRoot: string, jobs: CIJob[]): void {
+  const bbPath = join(repoRoot, "bitbucket-pipelines.yml");
+  if (existsSync(bbPath)) jobs.push(...parseBitbucketPipelines(bbPath));
 }
 
 function loadYaml(path: string): unknown {
@@ -77,19 +76,77 @@ function loadYaml(path: string): unknown {
 function normalizeScript(raw: unknown): string[] {
   if (raw === null || raw === undefined) return [];
   if (typeof raw === "string") return [raw];
-  if (Array.isArray(raw)) {
-    const out: string[] = [];
-    for (const item of raw) {
-      if (typeof item === "string") out.push(item);
-      else if (Array.isArray(item)) {
-        for (const x of item) {
-          if (typeof x === "string") out.push(x);
-        }
-      }
-    }
-    return out;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    if (typeof item === "string") return item;
+    if (Array.isArray(item)) return item.filter((x): x is string => typeof x === "string");
+    return [];
+  });
+}
+
+// ── GitLab CI ────────────────────────────────────────────────────────────
+
+function resolveGitlabStages(doc: Record<string, unknown>): string[] {
+  const raw = doc.stages;
+  if (Array.isArray(raw) && raw.length > 0) {
+    return raw.filter((s): s is string => typeof s === "string");
   }
-  return [];
+  return [...DEFAULT_GITLAB_STAGES];
+}
+
+function resolveGitlabDefaultImage(doc: Record<string, unknown>): string | null {
+  const defaultBlock = doc.default;
+  if (typeof defaultBlock === "object" && defaultBlock !== null) {
+    const img = extractImage((defaultBlock as Record<string, unknown>).image);
+    if (img !== null) return img;
+  }
+  return extractImage(doc.image);
+}
+
+function extractGitlabRawJobs(doc: Record<string, unknown>): [string, Record<string, unknown>][] {
+  const rawJobs: [string, Record<string, unknown>][] = [];
+  for (const [key, value] of Object.entries(doc)) {
+    if (key.startsWith(".") || GITLAB_RESERVED_KEYS.has(key)) continue;
+    if (typeof value !== "object" || value === null) continue;
+    const block = value as Record<string, unknown>;
+    if ("script" in block || "run" in block) rawJobs.push([key, block]);
+  }
+  return rawJobs;
+}
+
+function buildGitlabJob(
+  name: string,
+  block: Record<string, unknown>,
+  path: string,
+  defaultImage: string | null,
+  topBeforeScript: string[],
+): CIJob {
+  const jobImage = extractImage(block.image) ?? defaultImage;
+  const beforeScript = normalizeScript(block.before_script);
+  const before = beforeScript.length > 0 ? beforeScript : topBeforeScript;
+  let script = normalizeScript(block.script);
+  if (script.length === 0) script = normalizeScript(block.run);
+  const stage = typeof block.stage === "string" ? block.stage : "test";
+  return {
+    name,
+    stage,
+    script: [...before, ...script],
+    image: jobImage,
+    sourceFile: path.split("/").pop() ?? "",
+    skipReason: null,
+  };
+}
+
+function orderByStage(byStage: Map<string, CIJob[]>, stagesOrder: string[]): CIJob[] {
+  const ordered: CIJob[] = [];
+  for (const stage of stagesOrder) {
+    const jobs = byStage.get(stage);
+    if (jobs) ordered.push(...jobs);
+  }
+  for (const [stage, jobs] of byStage) {
+    if (!stagesOrder.includes(stage)) ordered.push(...jobs);
+  }
+  return ordered;
 }
 
 function parseGitlabCI(path: string): CIJob[] {
@@ -97,85 +154,47 @@ function parseGitlabCI(path: string): CIJob[] {
   if (typeof data !== "object" || data === null) return [];
   const doc = data as Record<string, unknown>;
 
-  // Stage order
-  const stagesRaw = doc.stages;
-  let stagesOrder: string[];
-  if (Array.isArray(stagesRaw) && stagesRaw.length > 0) {
-    stagesOrder = stagesRaw.filter((s): s is string => typeof s === "string");
-  } else {
-    stagesOrder = [...DEFAULT_GITLAB_STAGES];
-  }
-
-  // Default image
-  let defaultImage: string | null = null;
-  const defaultBlock = doc.default;
-  if (typeof defaultBlock === "object" && defaultBlock !== null) {
-    const db = defaultBlock as Record<string, unknown>;
-    defaultImage = extractImage(db.image);
-  }
-  if (defaultImage === null) {
-    defaultImage = extractImage(doc.image);
-  }
-
-  // Top-level before_script
+  const stagesOrder = resolveGitlabStages(doc);
+  const defaultImage = resolveGitlabDefaultImage(doc);
   const topBeforeScript = normalizeScript(doc.before_script);
+  const rawJobs = extractGitlabRawJobs(doc);
 
-  // Extract jobs
-  const rawJobs: [string, Record<string, unknown>][] = [];
-  for (const [key, value] of Object.entries(doc)) {
-    if (typeof key !== "string") continue;
-    if (key.startsWith(".")) continue;
-    if (GITLAB_RESERVED_KEYS.has(key)) continue;
-    if (typeof value !== "object" || value === null) continue;
-    const block = value as Record<string, unknown>;
-    if (!("script" in block) && !("run" in block)) continue;
-    rawJobs.push([key, block]);
-  }
-
-  // Group by stage
   const byStage = new Map<string, CIJob[]>();
   for (const [name, block] of rawJobs) {
-    const stage = typeof block.stage === "string" ? block.stage : "test";
-    if (!stagesOrder.includes(stage)) {
-      stagesOrder.push(stage);
+    const job = buildGitlabJob(name, block, path, defaultImage, topBeforeScript);
+    if (!stagesOrder.includes(job.stage)) stagesOrder.push(job.stage);
+    if (!byStage.has(job.stage)) byStage.set(job.stage, []);
+    byStage.get(job.stage)?.push(job);
+  }
+
+  return orderByStage(byStage, stagesOrder);
+}
+
+// ── GitHub Actions ───────────────────────────────────────────────────────
+
+function extractGithubSteps(steps: unknown): string[] {
+  if (!Array.isArray(steps)) return [];
+  const script: string[] = [];
+  for (const step of steps) {
+    if (typeof step !== "object" || step === null) continue;
+    const run = (step as Record<string, unknown>).run;
+    if (typeof run === "string") {
+      script.push(run);
+    } else if (Array.isArray(run)) {
+      script.push(...run.filter((x): x is string => typeof x === "string"));
     }
-
-    let jobImage = defaultImage;
-    const imgOverride = extractImage(block.image);
-    if (imgOverride !== null) jobImage = imgOverride;
-
-    const beforeScript = normalizeScript(block.before_script);
-    const before = beforeScript.length > 0 ? beforeScript : topBeforeScript;
-
-    let script = normalizeScript(block.script);
-    if (script.length === 0) script = normalizeScript(block.run);
-
-    const fullScript = [...before, ...script];
-    const job: CIJob = {
-      name,
-      stage,
-      script: fullScript,
-      image: jobImage,
-      sourceFile: path.split("/").pop() ?? "",
-      skipReason: null,
-    };
-
-    if (!byStage.has(stage)) byStage.set(stage, []);
-    byStage.get(stage)?.push(job);
   }
+  return script;
+}
 
-  // Order by stage
-  const ordered: CIJob[] = [];
-  for (const stage of stagesOrder) {
-    const stageJobs = byStage.get(stage);
-    if (stageJobs) ordered.push(...stageJobs);
+function extractGithubImage(def: Record<string, unknown>): string | null {
+  const container = def.container;
+  if (typeof container === "string") return container;
+  if (typeof container === "object" && container !== null) {
+    const img = (container as Record<string, unknown>).image;
+    if (typeof img === "string") return img;
   }
-  // Defensive: any stages not in order
-  for (const [stage, stageJobs] of byStage) {
-    if (!stagesOrder.includes(stage)) ordered.push(...stageJobs);
-  }
-
-  return ordered;
+  return null;
 }
 
 function parseGithubWorkflow(path: string): CIJob[] {
@@ -191,46 +210,128 @@ function parseGithubWorkflow(path: string): CIJob[] {
   const result: CIJob[] = [];
 
   for (const [jobName, jobDef] of Object.entries(jobsBlock as Record<string, unknown>)) {
-    if (typeof jobName !== "string" || typeof jobDef !== "object" || jobDef === null) continue;
+    if (typeof jobDef !== "object" || jobDef === null) continue;
     const def = jobDef as Record<string, unknown>;
-
-    const steps = def.steps;
-    const script: string[] = [];
-    if (Array.isArray(steps)) {
-      for (const step of steps) {
-        if (typeof step !== "object" || step === null) continue;
-        const s = step as Record<string, unknown>;
-        const run = s.run;
-        if (typeof run === "string") script.push(run);
-        else if (Array.isArray(run)) {
-          for (const x of run) {
-            if (typeof x === "string") script.push(x);
-          }
-        }
-      }
-    }
-
+    const script = extractGithubSteps(def.steps);
     if (script.length === 0) continue;
-
-    let image: string | null = null;
-    const container = def.container;
-    if (typeof container === "string") image = container;
-    else if (typeof container === "object" && container !== null) {
-      const c = container as Record<string, unknown>;
-      if (typeof c.image === "string") image = c.image;
-    }
-
     result.push({
       name: jobName,
       stage,
       script,
-      image,
+      image: extractGithubImage(def),
       sourceFile: filename,
       skipReason: null,
     });
   }
 
   return result;
+}
+
+// ── Bitbucket Pipelines ──────────────────────────────────────────────────
+
+function asRecord(val: unknown): Record<string, unknown> | null {
+  if (typeof val === "object" && val !== null) return val as Record<string, unknown>;
+  return null;
+}
+
+function extractBitbucketStep(entry: Record<string, unknown>): Record<string, unknown> | null {
+  if ("step" in entry) return asRecord(entry.step);
+  return null;
+}
+
+function walkParallelSteps(entry: Record<string, unknown>): Record<string, unknown>[] {
+  const par = entry.parallel;
+  const steps = Array.isArray(par) ? par : asRecord(par)?.steps;
+  if (!Array.isArray(steps)) return [];
+  const result: Record<string, unknown>[] = [];
+  for (const ps of steps) {
+    const rec = asRecord(ps);
+    if (rec) {
+      const inner = extractBitbucketStep(rec);
+      if (inner) result.push(inner);
+    }
+  }
+  return result;
+}
+
+function walkStageBlock(
+  entry: Record<string, unknown>,
+): { label: string; steps: Record<string, unknown>[] } | null {
+  const stageBlock = asRecord(entry.stage);
+  if (!stageBlock) return null;
+  const label = typeof stageBlock.name === "string" ? stageBlock.name : "stage";
+  const inner = stageBlock.steps;
+  if (!Array.isArray(inner)) return { label, steps: [] };
+  const steps: Record<string, unknown>[] = [];
+  for (const s of inner) {
+    const rec = asRecord(s);
+    if (rec) {
+      const step = extractBitbucketStep(rec);
+      if (step) steps.push(step);
+    }
+  }
+  return { label, steps };
+}
+
+interface BitbucketContext {
+  defaultImage: string | null;
+  filename: string;
+  usedNames: Set<string>;
+  result: CIJob[];
+}
+
+function pushBitbucketStep(
+  ctx: BitbucketContext,
+  stageLabel: string,
+  step: Record<string, unknown>,
+  fallbackIdx: number,
+): void {
+  const script = normalizeScript(step.script);
+  if (script.length === 0) return;
+
+  const name = typeof step.name === "string" ? step.name : `step-${fallbackIdx}`;
+  let unique = name;
+  let suffix = 2;
+  while (ctx.usedNames.has(unique)) {
+    unique = `${name}-${suffix++}`;
+  }
+  ctx.usedNames.add(unique);
+
+  ctx.result.push({
+    name: unique,
+    stage: stageLabel,
+    script,
+    image: extractImage(step.image) ?? ctx.defaultImage,
+    sourceFile: ctx.filename,
+    skipReason: null,
+  });
+}
+
+function collectEntrySteps(
+  rec: Record<string, unknown>,
+  stageLabel: string,
+): { label: string; steps: Record<string, unknown>[] } {
+  const direct = extractBitbucketStep(rec);
+  if (direct) return { label: stageLabel, steps: [direct] };
+  if ("parallel" in rec) return { label: stageLabel, steps: walkParallelSteps(rec) };
+  if ("stage" in rec) {
+    const block = walkStageBlock(rec);
+    if (block) return { label: `${stageLabel}:${block.label}`, steps: block.steps };
+  }
+  return { label: stageLabel, steps: [] };
+}
+
+function walkPipelineList(ctx: BitbucketContext, stageLabel: string, list: unknown): void {
+  if (!Array.isArray(list)) return;
+  let idx = 0;
+  for (const entry of list) {
+    const rec = asRecord(entry);
+    if (!rec) continue;
+    const { label, steps } = collectEntrySteps(rec, stageLabel);
+    for (const step of steps) {
+      pushBitbucketStep(ctx, label, step, idx++);
+    }
+  }
 }
 
 function parseBitbucketPipelines(path: string): CIJob[] {
@@ -238,113 +339,35 @@ function parseBitbucketPipelines(path: string): CIJob[] {
   if (typeof data !== "object" || data === null) return [];
   const doc = data as Record<string, unknown>;
 
-  const defaultImage = extractImage(doc.image);
   const pipelines = doc.pipelines;
   if (typeof pipelines !== "object" || pipelines === null) return [];
   const pipelinesBlock = pipelines as Record<string, unknown>;
 
-  const filename = path.split("/").pop() ?? "";
-  const result: CIJob[] = [];
-  const usedNames = new Set<string>();
-
-  const pushStep = (stageLabel: string, step: Record<string, unknown>, fallbackIdx: number) => {
-    const rawScript = normalizeScript(step.script);
-    if (rawScript.length === 0) return;
-
-    let name = typeof step.name === "string" ? step.name : `step-${fallbackIdx}`;
-    // Bitbucket step names can repeat across pipelines; disambiguate with stage prefix.
-    let unique = name;
-    let suffix = 2;
-    while (usedNames.has(unique)) {
-      unique = `${name}-${suffix++}`;
-    }
-    usedNames.add(unique);
-    name = unique;
-
-    let image = extractImage(step.image);
-    if (image === null) image = defaultImage;
-
-    result.push({
-      name,
-      stage: stageLabel,
-      script: rawScript,
-      image,
-      sourceFile: filename,
-      skipReason: null,
-    });
-  };
-
-  const walkPipelineList = (stageLabel: string, list: unknown) => {
-    if (!Array.isArray(list)) return;
-    let idx = 0;
-    for (const entry of list) {
-      if (typeof entry !== "object" || entry === null) continue;
-      const e = entry as Record<string, unknown>;
-
-      if ("step" in e && typeof e.step === "object" && e.step !== null) {
-        pushStep(stageLabel, e.step as Record<string, unknown>, idx++);
-        continue;
-      }
-
-      if ("parallel" in e) {
-        const par = e.parallel;
-        const steps = Array.isArray(par)
-          ? par
-          : typeof par === "object" && par !== null
-            ? (par as Record<string, unknown>).steps
-            : null;
-        if (Array.isArray(steps)) {
-          for (const ps of steps) {
-            if (typeof ps === "object" && ps !== null) {
-              const pe = ps as Record<string, unknown>;
-              if ("step" in pe && typeof pe.step === "object" && pe.step !== null) {
-                pushStep(stageLabel, pe.step as Record<string, unknown>, idx++);
-              }
-            }
-          }
-        }
-        continue;
-      }
-
-      if ("stage" in e && typeof e.stage === "object" && e.stage !== null) {
-        const stageBlock = e.stage as Record<string, unknown>;
-        const stageName =
-          typeof stageBlock.name === "string" ? stageBlock.name : `${stageLabel}:stage`;
-        const label = `${stageLabel}:${stageName}`;
-        const inner = stageBlock.steps;
-        if (Array.isArray(inner)) {
-          for (const s of inner) {
-            if (typeof s === "object" && s !== null) {
-              const se = s as Record<string, unknown>;
-              if ("step" in se && typeof se.step === "object" && se.step !== null) {
-                pushStep(label, se.step as Record<string, unknown>, idx++);
-              }
-            }
-          }
-        }
-      }
-    }
+  const ctx: BitbucketContext = {
+    defaultImage: extractImage(doc.image),
+    filename: path.split("/").pop() ?? "",
+    usedNames: new Set<string>(),
+    result: [],
   };
 
   const simpleKinds = ["default"] as const;
   const keyedKinds = ["branches", "pull-requests", "tags", "custom"] as const;
 
   for (const kind of simpleKinds) {
-    if (kind in pipelinesBlock) {
-      walkPipelineList(kind, pipelinesBlock[kind]);
-    }
+    if (kind in pipelinesBlock) walkPipelineList(ctx, kind, pipelinesBlock[kind]);
   }
-
   for (const kind of keyedKinds) {
     const block = pipelinesBlock[kind];
     if (typeof block !== "object" || block === null) continue;
     for (const [pattern, list] of Object.entries(block as Record<string, unknown>)) {
-      walkPipelineList(`${kind}:${pattern}`, list);
+      walkPipelineList(ctx, `${kind}:${pattern}`, list);
     }
   }
 
-  return result;
+  return ctx.result;
 }
+
+// ── Shared ───────────────────────────────────────────────────────────────
 
 function extractImage(raw: unknown): string | null {
   if (typeof raw === "string") return raw;

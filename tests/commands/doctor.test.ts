@@ -65,7 +65,8 @@ describe("runDoctorCommand", () => {
     const code = await runDoctorCommand({ repo: tmp, output: "text" });
     expect(code).toBe(1);
     // Strip ANSI to assert on content
-    const plain = captured.replace(/\x1b\[[0-9;]*m/g, "");
+    const ansiPattern = new RegExp("\x1b" + "\\[[0-9;]*m", "g");
+    const plain = captured.replace(ansiPattern, "");
     expect(plain).toContain("STITCH");
     expect(plain).toContain("failed");
   });
