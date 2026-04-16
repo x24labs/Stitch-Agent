@@ -1,0 +1,71 @@
+{
+  "name": "stitch-agent",
+  "version": "2.0.0",
+  "description": "Skill-first local CI runner -- run your CI jobs locally and fix failures with AI",
+  "type": "module",
+  "bin": {
+    "stitch": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build"
+  },
+  "keywords": [
+    "ci",
+    "local-ci",
+    "ai-agent",
+    "claude-code",
+    "devex",
+    "lint",
+    "test",
+    "automation",
+    "self-healing-ci",
+    "gitlab-ci",
+    "github-actions",
+    "ai",
+    "llm",
+    "stitch-agent"
+  ],
+  "homepage": "https://stitch-agent.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/x24labs/stitch"
+  },
+  "license": "MIT",
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.1.98",
+    "commander": "^13.0.0",
+    "execa": "^9.0.0",
+    "js-yaml": "^4.1.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^3.0.0",
+    "knip": "^5.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

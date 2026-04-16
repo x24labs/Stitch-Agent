@@ -1,21 +1,27 @@
-languages: [typescript, python]
-linter: eslint
-test_runner: vitest
-package_manager: pnpm
+# .stitch.yml -- optional config for `stitch run`.
+# All fields are optional. CLI flags override these values.
+# Drop this file at the repo root as `.stitch.yml` (or `.stitch.yaml`) to use it.
 
-conventions:
-  - "Always use explicit return types on public functions."
-  - "Never downgrade dependency versions."
-  - "Do not modify lock files manually."
+# Default agent when `stitch run` is invoked.
+# One of: claude, codex
+agent: claude
 
-auto_fix: [lint, format, simple_types, config_ci]
-escalate: [logic_errors, breaking_changes, dependency_conflicts]
-
+# Max fix attempts per job (overrides --max-attempts).
 max_attempts: 3
 
-notify:
-  channels:
-    - type: slack
-      webhook_url: "https://hooks.slack.com/services/xxx/yyy/zzz"
-    - type: webhook
-      url: "https://hooks.example.com/stitch"
+# Auto-push after a successful fix. Set to false to keep fixes local only.
+# Equivalent to passing --no-push on the CLI.
+push: true
+
+# Job filtering. `include` is a prefix-match allowlist (equivalent to --jobs).
+# `exclude` is a prefix-match blocklist applied after the allowlist / classifier.
+# Matching uses `:`, `-`, `_` as segment separators, so `deploy` matches
+# `deploy:prod` but not `deployment`.
+jobs:
+  include: [lint, test, typecheck]
+  exclude: [deploy, publish]
+
+# How to decide which jobs are "verify" (runnable locally) vs "infra" (skip).
+# - llm: use the configured agent to classify (default, cached in .stitch/)
+# - none: run every job the parser finds (no skipping by classifier)
+classification: llm

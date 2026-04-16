@@ -1,22 +1,28 @@
-__pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
+# Dependencies
+node_modules/
+
+# Build output
 dist/
-build/
-.eggs/
-*.egg
-.venv/
-venv/
+*.tsbuildinfo
+
+# Environment
 .env
 .env.*
 !.env.example
-*.log
-.pytest_cache/
-.ruff_cache/
-.pyright/
-.mypy_cache/
-htmlcov/
-.coverage
-coverage.xml
+
+# Stitch cache
 .stitch/
+
+# Test coverage
+coverage/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
