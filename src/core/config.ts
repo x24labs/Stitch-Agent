@@ -19,8 +19,10 @@ const ConfigSchema = z
   })
   .strict();
 
+/** User-facing configuration loaded from `.stitch.yml`. All fields optional. */
 export type StitchConfig = z.infer<typeof ConfigSchema>;
 
+/** Thrown when `.stitch.yml` exists but cannot be read or parsed. */
 export class ConfigError extends Error {
   constructor(message: string) {
     super(message);
@@ -30,6 +32,7 @@ export class ConfigError extends Error {
 
 const CONFIG_FILENAMES = [".stitch.yml", ".stitch.yaml"];
 
+/** Load and validate `.stitch.yml` from the given repo root. Returns `null` if no config file exists. */
 export function loadConfig(repoRoot: string): StitchConfig | null {
   for (const name of CONFIG_FILENAMES) {
     const path = join(repoRoot, name);
