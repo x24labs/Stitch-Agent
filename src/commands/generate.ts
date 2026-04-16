@@ -13,35 +13,38 @@ interface GenerateOptions {
 
 const MAX_CONTEXT_CHARS = 8_000;
 
+function loadCIContent(repoRoot: string, ciFile: string | null): string {
+  if (!ciFile) return "";
+  const ciPath = resolve(repoRoot, ciFile);
+  if (!existsSync(ciPath)) return "";
+  try {
+    return readFileSync(ciPath, "utf-8").slice(0, MAX_CONTEXT_CHARS);
+  } catch {
+    return "";
+  }
+}
+
+function loadConfigSnippets(repoRoot: string, entryFiles: string[]): string[] {
+  const snippets: string[] = [];
+  for (const name of entryFiles) {
+    if (name.startsWith("package.json scripts.")) continue;
+    const path = resolve(repoRoot, name);
+    if (!existsSync(path)) continue;
+    try {
+      const content = readFileSync(path, "utf-8").slice(0, 2000);
+      snippets.push(`### ${name}\n\`\`\`\n${content}\n\`\`\``);
+    } catch {
+      // ignore
+    }
+  }
+  return snippets;
+}
+
 function buildPrompt(repoRoot: string): [string, string] {
   const ctx = analyzeRepo(repoRoot);
   const summary = repoContextSummary(ctx);
-
-  let ciContent = "";
-  if (ctx.existingCIFile) {
-    const ciPath = resolve(repoRoot, ctx.existingCIFile);
-    if (existsSync(ciPath)) {
-      try {
-        ciContent = readFileSync(ciPath, "utf-8").slice(0, MAX_CONTEXT_CHARS);
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-  const configSnippets: string[] = [];
-  for (const name of ctx.entryFiles) {
-    if (name.startsWith("package.json scripts.")) continue;
-    const path = resolve(repoRoot, name);
-    if (existsSync(path)) {
-      try {
-        const content = readFileSync(path, "utf-8").slice(0, 2000);
-        configSnippets.push(`### ${name}\n\`\`\`\n${content}\n\`\`\``);
-      } catch {
-        // ignore
-      }
-    }
-  }
+  const ciContent = loadCIContent(repoRoot, ctx.existingCIFile);
+  const configSnippets = loadConfigSnippets(repoRoot, ctx.entryFiles);
 
   const platform = ctx.ciPlatform ?? "gitlab";
   const parts: string[] = [

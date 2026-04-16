@@ -160,13 +160,9 @@ function matchesAllowlist(jobName: string, allowlist: string[]): boolean {
   const separators = [":", "-", "_"];
   for (const entry of allowlist) {
     if (jobName === entry) return true;
-    if (
-      jobName.startsWith(entry) &&
-      jobName.length > entry.length &&
-      separators.includes(jobName[entry.length]!)
-    ) {
-      return true;
-    }
+    if (!jobName.startsWith(entry) || jobName.length <= entry.length) continue;
+    const sep = jobName.charAt(entry.length);
+    if (separators.includes(sep)) return true;
   }
   return false;
 }
@@ -176,26 +172,26 @@ export function applyFilter(
   cfg: FilterConfig,
   classifications: Record<string, string> | null = null,
 ): CIJob[] {
-  return jobs.map((job) => {
-    let skipReason: string | null = null;
+  return jobs.map((job) => ({
+    ...job,
+    skipReason: computeSkipReason(job.name, cfg, classifications),
+  }));
+}
 
-    if (cfg.only !== null) {
-      if (!matchesAllowlist(job.name, cfg.only)) {
-        skipReason = `not in --jobs allowlist ${JSON.stringify(cfg.only)}`;
-      }
-    } else if (classifications) {
-      const label = classifications[job.name] ?? "verify";
-      if (label === "infra") {
-        skipReason = "infrastructure job (classified by LLM)";
-      }
-    }
-
-    if (!skipReason && cfg.exclude && cfg.exclude.length > 0) {
-      if (matchesAllowlist(job.name, cfg.exclude)) {
-        skipReason = `in exclude list ${JSON.stringify(cfg.exclude)}`;
-      }
-    }
-
-    return { ...job, skipReason };
-  });
+function computeSkipReason(
+  name: string,
+  cfg: FilterConfig,
+  classifications: Record<string, string> | null,
+): string | null {
+  if (cfg.only !== null && !matchesAllowlist(name, cfg.only)) {
+    return `not in --jobs allowlist ${JSON.stringify(cfg.only)}`;
+  }
+  if (cfg.only === null && classifications) {
+    const label = classifications[name] ?? "verify";
+    if (label === "infra") return "infrastructure job (classified by LLM)";
+  }
+  if (cfg.exclude && cfg.exclude.length > 0 && matchesAllowlist(name, cfg.exclude)) {
+    return `in exclude list ${JSON.stringify(cfg.exclude)}`;
+  }
+  return null;
 }

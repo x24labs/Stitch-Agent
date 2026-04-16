@@ -62,23 +62,7 @@ export class ClaudeCodeDriver implements AgentDriver {
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
         for (const line of lines) {
-          if (!line.trim()) continue;
-          const event = parseEvent(line.trim());
-          if (!event) continue;
-          if (event.kind === "text") {
-            activity.push(event.content);
-            this.emit(activity);
-          } else if (event.kind === "tool_use") {
-            activity.push(`> ${event.content}`);
-            this.emit(activity);
-          } else if (event.kind === "tool_result") {
-            const preview =
-              event.content.length > 200 ? `${event.content.slice(0, 200)}...` : event.content;
-            activity.push(`  ${preview}`);
-            this.emit(activity);
-          } else if (event.kind === "result") {
-            resultText = event.content;
-          }
+          resultText = handleStdoutLine(line, activity, resultText, (a) => this.emit(a));
         }
       });
 
@@ -129,6 +113,86 @@ interface ParsedEvent {
   content: string;
 }
 
+function handleStdoutLine(
+  line: string,
+  activity: string[],
+  resultText: string,
+  emit: (activity: string[]) => void,
+): string {
+  if (!line.trim()) return resultText;
+  const event = parseEvent(line.trim());
+  if (!event) return resultText;
+  if (event.kind === "text") {
+    activity.push(event.content);
+    emit(activity);
+  } else if (event.kind === "tool_use") {
+    activity.push(`> ${event.content}`);
+    emit(activity);
+  } else if (event.kind === "tool_result") {
+    const preview =
+      event.content.length > 200 ? `${event.content.slice(0, 200)}...` : event.content;
+    activity.push(`  ${preview}`);
+    emit(activity);
+  } else if (event.kind === "result") {
+    return event.content;
+  }
+  return resultText;
+}
+
+function parseToolUseBlock(b: Record<string, unknown>): ParsedEvent {
+  const toolName = (b.name as string) ?? "tool";
+  const input = (b.input as Record<string, unknown>) ?? {};
+  const label =
+    (input.description as string) ||
+    (input.command as string) ||
+    (input.file_path as string) ||
+    (input.path as string) ||
+    (input.pattern as string) ||
+    (input.query as string) ||
+    "";
+  return { kind: "tool_use", content: label ? `${toolName}: ${label}` : toolName };
+}
+
+function parseAssistantEvent(data: Record<string, unknown>): ParsedEvent | null {
+  const msg = data.message as Record<string, unknown> | undefined;
+  const contentBlocks = (msg?.content as unknown[]) ?? [];
+  const parts: string[] = [];
+
+  for (const block of contentBlocks) {
+    if (typeof block !== "object" || block === null) continue;
+    const b = block as Record<string, unknown>;
+    if (b.type === "text" && typeof b.text === "string" && b.text) {
+      parts.push(b.text);
+    } else if (b.type === "tool_use") {
+      return parseToolUseBlock(b);
+    }
+  }
+  if (parts.length > 0) return { kind: "text", content: parts.join(" ") };
+  return null;
+}
+
+function parseUserEvent(data: Record<string, unknown>): ParsedEvent | null {
+  const msg = data.message as Record<string, unknown> | undefined;
+  const contentBlocks = (msg?.content as unknown[]) ?? [];
+  for (const block of contentBlocks) {
+    if (typeof block !== "object" || block === null) continue;
+    const b = block as Record<string, unknown>;
+    if (b.type === "tool_result") {
+      let resultContent = b.content;
+      if (Array.isArray(resultContent)) {
+        resultContent = resultContent
+          .filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null)
+          .map((x) => (x.text as string) ?? "")
+          .join(" ");
+      }
+      if (typeof resultContent === "string" && resultContent.trim()) {
+        return { kind: "tool_result", content: resultContent.trim() };
+      }
+    }
+  }
+  return null;
+}
+
 function parseEvent(line: string): ParsedEvent | null {
   let data: Record<string, unknown>;
   try {
@@ -139,58 +203,9 @@ function parseEvent(line: string): ParsedEvent | null {
 
   const eventType = data.type;
 
-  if (eventType === "assistant") {
-    const msg = data.message as Record<string, unknown> | undefined;
-    const contentBlocks = (msg?.content as unknown[]) ?? [];
-    const parts: string[] = [];
-
-    for (const block of contentBlocks) {
-      if (typeof block !== "object" || block === null) continue;
-      const b = block as Record<string, unknown>;
-
-      if (b.type === "text" && typeof b.text === "string" && b.text) {
-        parts.push(b.text);
-      } else if (b.type === "tool_use") {
-        const toolName = (b.name as string) ?? "tool";
-        const input = (b.input as Record<string, unknown>) ?? {};
-        const desc = (input.description ?? input.command ?? "") as string;
-        if (desc) return { kind: "tool_use", content: `${toolName}: ${desc}` };
-        const path = (input.file_path ?? input.path ?? "") as string;
-        const pattern = (input.pattern ?? input.query ?? "") as string;
-        if (path) return { kind: "tool_use", content: `${toolName}: ${path}` };
-        if (pattern) return { kind: "tool_use", content: `${toolName}: ${pattern}` };
-        return { kind: "tool_use", content: toolName };
-      }
-    }
-    if (parts.length > 0) return { kind: "text", content: parts.join(" ") };
-    return null;
-  }
-
-  if (eventType === "user") {
-    const msg = data.message as Record<string, unknown> | undefined;
-    const contentBlocks = (msg?.content as unknown[]) ?? [];
-    for (const block of contentBlocks) {
-      if (typeof block !== "object" || block === null) continue;
-      const b = block as Record<string, unknown>;
-      if (b.type === "tool_result") {
-        let resultContent = b.content;
-        if (Array.isArray(resultContent)) {
-          resultContent = resultContent
-            .filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null)
-            .map((x) => (x.text as string) ?? "")
-            .join(" ");
-        }
-        if (typeof resultContent === "string" && resultContent.trim()) {
-          return { kind: "tool_result", content: resultContent.trim() };
-        }
-      }
-    }
-    return null;
-  }
-
-  if (eventType === "result") {
-    return { kind: "result", content: (data.result as string) ?? "" };
-  }
+  if (eventType === "assistant") return parseAssistantEvent(data);
+  if (eventType === "user") return parseUserEvent(data);
+  if (eventType === "result") return { kind: "result", content: (data.result as string) ?? "" };
 
   return null;
 }

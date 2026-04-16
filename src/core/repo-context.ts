@@ -61,17 +61,7 @@ const CI_CONFIGS: [string, string][] = [
 
 const TEST_JOB_PATTERNS = new Set(["test", "lint", "check", "typecheck", "audit", "format"]);
 
-export function analyzeRepo(repoRoot: string): RepoContext {
-  const ctx: RepoContext = {
-    languages: [],
-    packageManager: null,
-    frameworks: [],
-    ciPlatform: null,
-    hasTestJobs: false,
-    existingCIFile: null,
-    entryFiles: [],
-  };
-
+function detectLanguages(repoRoot: string, ctx: RepoContext): void {
   const seenLangs = new Set<string>();
 
   // Detect languages and package manager
@@ -86,7 +76,9 @@ export function analyzeRepo(repoRoot: string): RepoContext {
       }
     }
   }
+}
 
+function detectFrameworks(repoRoot: string, ctx: RepoContext): void {
   // Detect frameworks
   for (const [filename, framework] of FRAMEWORK_SIGNALS) {
     if (existsSync(join(repoRoot, filename)) && !ctx.frameworks.includes(framework)) {
@@ -105,35 +97,34 @@ export function analyzeRepo(repoRoot: string): RepoContext {
   if (existsSync(pkgJson)) {
     detectFromPackageJson(pkgJson, ctx);
   }
+}
 
-  // Detect CI platform
+function resolveExistingCIFile(full: string, relPath: string): string | null {
+  try {
+    if (statSync(full).isFile()) return relPath;
+    if (statSync(full).isDirectory()) {
+      const ymls = readdirSync(full)
+        .filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))
+        .sort();
+      if (ymls.length > 0) return `${relPath}/${ymls[0]}`;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function detectCIPlatform(repoRoot: string, ctx: RepoContext): void {
   for (const [path, platform] of CI_CONFIGS) {
     const full = join(repoRoot, path);
-    if (existsSync(full)) {
-      ctx.ciPlatform = platform;
-      try {
-        if (statSync(full).isFile()) {
-          ctx.existingCIFile = path;
-        } else if (statSync(full).isDirectory()) {
-          const ymls = readdirSync(full)
-            .filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))
-            .sort();
-          if (ymls.length > 0) {
-            ctx.existingCIFile = `${path}/${ymls[0]}`;
-          }
-        }
-      } catch {
-        // ignore
-      }
-      break;
-    }
+    if (!existsSync(full)) continue;
+    ctx.ciPlatform = platform;
+    ctx.existingCIFile = resolveExistingCIFile(full, path);
+    break;
   }
+}
 
-  // Detect test jobs
-  if (ctx.existingCIFile && ctx.ciPlatform) {
-    ctx.hasTestJobs = hasTestJobs(repoRoot, ctx.ciPlatform);
-  }
-
+function collectEntryFiles(repoRoot: string, ctx: RepoContext): void {
   // Collect key config files
   for (const name of [
     "pyproject.toml",
@@ -150,6 +141,29 @@ export function analyzeRepo(repoRoot: string): RepoContext {
       ctx.entryFiles.push(name);
     }
   }
+}
+
+export function analyzeRepo(repoRoot: string): RepoContext {
+  const ctx: RepoContext = {
+    languages: [],
+    packageManager: null,
+    frameworks: [],
+    ciPlatform: null,
+    hasTestJobs: false,
+    existingCIFile: null,
+    entryFiles: [],
+  };
+
+  detectLanguages(repoRoot, ctx);
+  detectFrameworks(repoRoot, ctx);
+  detectCIPlatform(repoRoot, ctx);
+
+  // Detect test jobs
+  if (ctx.existingCIFile && ctx.ciPlatform) {
+    ctx.hasTestJobs = hasTestJobs(repoRoot, ctx.ciPlatform);
+  }
+
+  collectEntryFiles(repoRoot, ctx);
 
   return ctx;
 }
@@ -226,50 +240,52 @@ function detectFromPackageJson(path: string, ctx: RepoContext): void {
   }
 }
 
+function hasTestJobsGitlab(repoRoot: string): boolean {
+  const ciFile = join(repoRoot, ".gitlab-ci.yml");
+  if (!existsSync(ciFile)) return false;
+  try {
+    const yaml = require("js-yaml");
+    const data = yaml.load(readFileSync(ciFile, "utf-8"));
+    if (typeof data !== "object" || data === null) return false;
+    for (const key of Object.keys(data as Record<string, unknown>)) {
+      if (
+        typeof key === "string" &&
+        [...TEST_JOB_PATTERNS].some((p) => key.toLowerCase().includes(p))
+      ) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function matchesTestPattern(name: string): boolean {
+  const lower = name.toLowerCase();
+  return [...TEST_JOB_PATTERNS].some((p) => lower.includes(p));
+}
+
+function hasTestJobsGithub(repoRoot: string): boolean {
+  const wfDir = join(repoRoot, ".github", "workflows");
+  if (!existsSync(wfDir)) return false;
+  try {
+    const yaml = require("js-yaml");
+    for (const file of readdirSync(wfDir).filter((f) => f.endsWith(".yml"))) {
+      const data = yaml.load(readFileSync(join(wfDir, file), "utf-8"));
+      if (typeof data !== "object" || data === null) continue;
+      const jobs = (data as Record<string, unknown>).jobs;
+      if (typeof jobs !== "object" || jobs === null) continue;
+      if (Object.keys(jobs as Record<string, unknown>).some(matchesTestPattern)) return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 function hasTestJobs(repoRoot: string, platform: string): boolean {
-  if (platform === "gitlab") {
-    const ciFile = join(repoRoot, ".gitlab-ci.yml");
-    if (!existsSync(ciFile)) return false;
-    try {
-      const yaml = require("js-yaml");
-      const data = yaml.load(readFileSync(ciFile, "utf-8"));
-      if (typeof data !== "object" || data === null) return false;
-      for (const key of Object.keys(data as Record<string, unknown>)) {
-        if (
-          typeof key === "string" &&
-          [...TEST_JOB_PATTERNS].some((p) => key.toLowerCase().includes(p))
-        ) {
-          return true;
-        }
-      }
-    } catch {
-      return false;
-    }
-    return false;
-  }
-
-  if (platform === "github") {
-    const wfDir = join(repoRoot, ".github", "workflows");
-    if (!existsSync(wfDir)) return false;
-    try {
-      const yaml = require("js-yaml");
-      for (const file of readdirSync(wfDir).filter((f) => f.endsWith(".yml"))) {
-        const data = yaml.load(readFileSync(join(wfDir, file), "utf-8"));
-        if (typeof data !== "object" || data === null) continue;
-        const jobs = (data as Record<string, unknown>).jobs;
-        if (typeof jobs === "object" && jobs !== null) {
-          for (const jobName of Object.keys(jobs as Record<string, unknown>)) {
-            if ([...TEST_JOB_PATTERNS].some((p) => jobName.toLowerCase().includes(p))) {
-              return true;
-            }
-          }
-        }
-      }
-    } catch {
-      return false;
-    }
-    return false;
-  }
-
+  if (platform === "gitlab") return hasTestJobsGitlab(repoRoot);
+  if (platform === "github") return hasTestJobsGithub(repoRoot);
   return false;
 }

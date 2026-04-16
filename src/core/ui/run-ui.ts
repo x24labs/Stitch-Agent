@@ -44,7 +44,7 @@ class Spinner {
   private timer: ReturnType<typeof setInterval> | null = null;
 
   get frame(): string {
-    return SPINNER_FRAMES[this.idx % SPINNER_FRAMES.length]!;
+    return SPINNER_FRAMES[this.idx % SPINNER_FRAMES.length] ?? "";
   }
 
   start(onTick: () => void): void {
@@ -232,8 +232,7 @@ function pad(s: string, n: number): string {
 function buildPipelineText(step: number): StyledText {
   const isLast = step >= PIPELINE_STEPS.length - 1;
   const parts: ReturnType<typeof bold>[] = [];
-  for (let i = 0; i < PIPELINE_STEPS.length; i++) {
-    const name = PIPELINE_STEPS[i]!;
+  PIPELINE_STEPS.forEach((name, i) => {
     if (i < step || (i === step && isLast)) {
       parts.push(fg(cGreen)(bold(`[ ${name} ]`)));
     } else if (i === step) {
@@ -244,52 +243,55 @@ function buildPipelineText(step: number): StyledText {
     if (i < PIPELINE_STEPS.length - 1) {
       parts.push(i < step || (i < step + 1 && isLast) ? fg(cGreen)(" \u2192 ") : dim(" \u2192 "));
     }
-  }
+  });
   return new StyledText(parts);
 }
 
 // ── Job Row Builder ───────────────────────────────────────────────────────
 
-function buildJobRow(j: JobState, spinnerFrame: string): StyledText {
+function buildJobInfo(j: JobState): string {
   const isActive = j.status === "running" || j.status === "fixing";
-  const isSkip = j.status === "skipped";
   const isPassed = j.status === "passed";
   const isFailed = j.status === "escalated" || j.status === "failed";
-
-  let info = "";
-  if (isActive && j.maxAttempts > 1) info = `attempt ${j.attempts}/${j.maxAttempts}`;
-  else if (isPassed && j.duration !== null) {
-    info = `${j.duration.toFixed(1)}s`;
-    if (j.attempts > 1) info += ` (${j.attempts} attempts)`;
-  } else if (isFailed && j.duration !== null) {
-    info = `${j.duration.toFixed(1)}s (${j.attempts} attempts)`;
-  } else if (isSkip) {
-    info = j.skipReason?.includes("infra") ? "infra" : "skipped";
+  if (isActive && j.maxAttempts > 1) return `attempt ${j.attempts}/${j.maxAttempts}`;
+  if (isPassed && j.duration !== null) {
+    const base = `${j.duration.toFixed(1)}s`;
+    return j.attempts > 1 ? `${base} (${j.attempts} attempts)` : base;
   }
+  if (isFailed && j.duration !== null) return `${j.duration.toFixed(1)}s (${j.attempts} attempts)`;
+  if (j.status === "skipped") return j.skipReason?.includes("infra") ? "infra" : "skipped";
+  return "";
+}
 
-  // Status column - build as separate chunks (don't nest TextChunks in template literals)
-  const [label, color] = statusLabel(j.status);
-  const statusChunks: ReturnType<typeof bold>[] = [];
-  if (isActive) {
-    statusChunks.push(fg(color)(`${spinnerFrame} `), fg(color)(pad(label.trim(), 6)));
-  } else if (isPassed) {
-    statusChunks.push(fg(cGreen)("\u2713 "), fg(cGreen)(pad(label.trim(), 6)));
-  } else if (isFailed) {
-    statusChunks.push(fg(cRed)("\u2717 "), fg(cRed)(pad(label.trim(), 6)));
-  } else if (isSkip) {
-    statusChunks.push(dim(`\u00bb ${pad(label.trim(), 6)}`));
-  } else {
-    statusChunks.push(dim(pad(label.trim(), 8)));
+function buildStatusChunks(status: string, spinnerFrame: string): ReturnType<typeof bold>[] {
+  const [label, color] = statusLabel(status);
+  const padded = pad(label.trim(), 6);
+  switch (status) {
+    case "running":
+    case "fixing":
+      return [fg(color)(`${spinnerFrame} `), fg(color)(padded)];
+    case "passed":
+      return [fg(cGreen)("\u2713 "), fg(cGreen)(padded)];
+    case "escalated":
+    case "failed":
+      return [fg(cRed)("\u2717 "), fg(cRed)(padded)];
+    case "skipped":
+      return [dim(`\u00bb ${padded}`)];
+    default:
+      return [dim(pad(label.trim(), 8))];
   }
+}
 
+function buildJobRow(j: JobState, spinnerFrame: string): StyledText {
+  const isSkip = j.status === "skipped";
+  const info = buildJobInfo(j);
   const chunks: ReturnType<typeof bold>[] = [
-    ...statusChunks,
+    ...buildStatusChunks(j.status, spinnerFrame),
     isSkip ? dim(pad(j.name, 24)) : bold(pad(j.name, 24)),
     isSkip ? dim(pad(j.stage, 18)) : { __isChunk: true as const, text: pad(j.stage, 18) },
     { __isChunk: true as const, text: "  " },
     isSkip ? dim(info) : { __isChunk: true as const, text: info },
   ];
-
   return new StyledText(chunks);
 }
 
@@ -590,113 +592,119 @@ function updateRunView(
   });
   view.runJobs.content = new StyledText(jobChunks);
 
-  // Driver panel
-  if (state.fixing) {
-    const LOG_ROWS = 12;
-    const driverChunks = [
-      fg(cPurple)(spinner.frame),
-      fg(cPurple)(bold(` ${state.fixing.label}`)),
-      dim("  fixing with "),
-      fg(cBlue)(bold(state.fixing.driver)),
-      { __isChunk: true as const, text: "\n" },
-    ];
-    const logLines = (state.fixing.log || "")
-      .trim()
-      .split("\n")
-      .filter(
-        (l) =>
-          !l.includes("\u2192") && !l.includes("STITCH -") && !l.includes("\u2500\u2500\u2500"),
-      )
-      .slice(-LOG_ROWS);
-    for (const l of logLines) {
-      const lo = l.toLowerCase();
-      const isErr = ["error", "fail", "assert", "exception"].some((k) => lo.includes(k));
-      const isCmd = l.startsWith("> ");
-      driverChunks.push(isErr ? fg(cRed)(l) : isCmd ? fg(cCyan)(l) : dim(l));
-      driverChunks.push({ __isChunk: true as const, text: "\n" });
-    }
-    // Pad to fixed height
-    for (let i = logLines.length; i < LOG_ROWS; i++) {
-      driverChunks.push({ __isChunk: true as const, text: "\n" });
-    }
-    view.runDriver.content = new StyledText(driverChunks);
-    view.runDriver.visible = true;
-  } else {
-    view.runDriver.visible = false;
-  }
-
-  // Errors
-  if (isDone) {
-    const failed = state.jobs.filter(
-      (j) => (j.status === "escalated" || j.status === "failed") && j.errorLog,
-    );
-    if (failed.length > 0) {
-      const errChunks: ReturnType<typeof bold>[] = [];
-      for (const j of failed) {
-        errChunks.push({ __isChunk: true as const, text: "\n" });
-        errChunks.push(fg(cRed)(bold(`x ${j.name}`)));
-        errChunks.push({ __isChunk: true as const, text: "\n" });
-        for (const l of j.errorLog.trim().split("\n").slice(-6)) {
-          errChunks.push(l.toLowerCase().includes("error") ? fg(cRed)(l) : dim(l));
-          errChunks.push({ __isChunk: true as const, text: "\n" });
-        }
-      }
-      view.runErrors.content = new StyledText(errChunks);
-      view.runErrors.visible = true;
-    } else {
-      view.runErrors.visible = false;
-    }
-  } else {
-    view.runErrors.visible = false;
-  }
-
-  // Git commit
-  if (isDone && state.lastReport?.commitSha) {
-    const commitChunks = [
-      fg(cGreen)("*"),
-      dim(" committed "),
-      fg(cOrange)(bold(state.lastReport.commitSha.slice(0, 8))),
-      dim(` fix(stitch): ${state.lastReport.fixed.join(", ")}`),
-    ];
-    if (state.lastReport.pushed) commitChunks.push(fg(cGreen)(" pushed"));
-    view.runCommit.content = new StyledText(commitChunks);
-    view.runCommit.visible = true;
-  } else {
-    view.runCommit.visible = false;
-  }
-
-  // Pipeline
+  updateDriverPanel(view, state, spinner);
+  updateErrorPanel(view, state, isDone);
+  updateCommitPanel(view, state, isDone);
   view.runPipeline.content = buildPipelineText(tuiState.pipelineStep);
+  updateFooter(view, state, w, isRunning, isDone, allPassed);
+}
 
-  // Footer
-  let statusChunk: ReturnType<typeof bold>;
-  if (allPassed && state.lastReport) {
-    statusChunk = fg(cGreen)(bold(`STITCH - All ${state.lastReport.passed} jobs passed`));
-  } else if (isDone && state.lastReport) {
-    statusChunk = fg(cRed)(
-      bold(`STITCH - ${state.lastReport.failed} failed, ${state.lastReport.passed} passed`),
-    );
-  } else if (isRunning) {
-    statusChunk = fg(cBlue)(bold("STITCH - Running"));
-  } else {
-    statusChunk = fg(cBlue)(bold("STITCH"));
+function updateDriverPanel(view: ViewTree, state: AppState, spinner: Spinner): void {
+  if (!state.fixing) {
+    view.runDriver.visible = false;
+    return;
   }
+  const LOG_ROWS = 12;
+  const driverChunks: ReturnType<typeof bold>[] = [
+    fg(cPurple)(spinner.frame),
+    fg(cPurple)(bold(` ${state.fixing.label}`)),
+    dim("  fixing with "),
+    fg(cBlue)(bold(state.fixing.driver)),
+    { __isChunk: true as const, text: "\n" },
+  ];
+  const logLines = (state.fixing.log || "")
+    .trim()
+    .split("\n")
+    .filter(
+      (l) => !l.includes("\u2192") && !l.includes("STITCH -") && !l.includes("\u2500\u2500\u2500"),
+    )
+    .slice(-LOG_ROWS);
+  for (const l of logLines) {
+    const lo = l.toLowerCase();
+    const isErr = ["error", "fail", "assert", "exception"].some((k) => lo.includes(k));
+    driverChunks.push(l.startsWith("> ") ? fg(cCyan)(l) : isErr ? fg(cRed)(l) : dim(l));
+    driverChunks.push({ __isChunk: true as const, text: "\n" });
+  }
+  for (let i = logLines.length; i < LOG_ROWS; i++) {
+    driverChunks.push({ __isChunk: true as const, text: "\n" });
+  }
+  view.runDriver.content = new StyledText(driverChunks);
+  view.runDriver.visible = true;
+}
+
+function updateErrorPanel(view: ViewTree, state: AppState, isDone: boolean): void {
+  if (!isDone) {
+    view.runErrors.visible = false;
+    return;
+  }
+  const failed = state.jobs.filter(
+    (j) => (j.status === "escalated" || j.status === "failed") && j.errorLog,
+  );
+  if (failed.length === 0) {
+    view.runErrors.visible = false;
+    return;
+  }
+  const errChunks: ReturnType<typeof bold>[] = [];
+  for (const j of failed) {
+    errChunks.push({ __isChunk: true as const, text: "\n" });
+    errChunks.push(fg(cRed)(bold(`x ${j.name}`)));
+    errChunks.push({ __isChunk: true as const, text: "\n" });
+    for (const l of j.errorLog.trim().split("\n").slice(-6)) {
+      errChunks.push(l.toLowerCase().includes("error") ? fg(cRed)(l) : dim(l));
+      errChunks.push({ __isChunk: true as const, text: "\n" });
+    }
+  }
+  view.runErrors.content = new StyledText(errChunks);
+  view.runErrors.visible = true;
+}
+
+function updateCommitPanel(view: ViewTree, state: AppState, isDone: boolean): void {
+  if (!isDone || !state.lastReport?.commitSha) {
+    view.runCommit.visible = false;
+    return;
+  }
+  const commitChunks = [
+    fg(cGreen)("*"),
+    dim(" committed "),
+    fg(cOrange)(bold(state.lastReport.commitSha.slice(0, 8))),
+    dim(` fix(stitch): ${state.lastReport.fixed.join(", ")}`),
+  ];
+  if (state.lastReport.pushed) commitChunks.push(fg(cGreen)(" pushed"));
+  view.runCommit.content = new StyledText(commitChunks);
+  view.runCommit.visible = true;
+}
+
+function buildStatusText(
+  isRunning: boolean,
+  isDone: boolean,
+  allPassed: boolean,
+  report: AppState["lastReport"],
+): string {
+  if (allPassed && report) return `STITCH - All ${report.passed} jobs passed`;
+  if (isDone && report) return `STITCH - ${report.failed} failed, ${report.passed} passed`;
+  if (isRunning) return "STITCH - Running";
+  return "STITCH";
+}
+
+function updateFooter(
+  view: ViewTree,
+  state: AppState,
+  w: number,
+  isRunning: boolean,
+  isDone: boolean,
+  allPassed: boolean,
+): void {
+  const statusText = buildStatusText(isRunning, isDone, allPassed, state.lastReport);
+  const statusChunk = allPassed
+    ? fg(cGreen)(bold(statusText))
+    : isDone
+      ? fg(cRed)(bold(statusText))
+      : fg(cBlue)(bold(statusText));
   const cmdsText = isDone ? "enter run again  q quit" : "q quit  ctrl+c abort";
   const cmdsChunk = isDone
     ? new StyledText([bold("enter"), dim(" run again  "), bold("q"), dim(" quit")])
     : new StyledText([bold("q"), dim(" quit  "), bold("ctrl+c"), dim(" abort")]);
-
-  // Calculate status visible length (rough: strip the style wrapper)
-  const statusText =
-    allPassed && state.lastReport
-      ? `STITCH - All ${state.lastReport.passed} jobs passed`
-      : isDone && state.lastReport
-        ? `STITCH - ${state.lastReport.failed} failed, ${state.lastReport.passed} passed`
-        : isRunning
-          ? "STITCH - Running"
-          : "STITCH";
   const gap = Math.max(2, w - statusText.length - cmdsText.length);
-
   view.runFooter.content = new StyledText([
     ...styledLine(w).chunks,
     { __isChunk: true as const, text: "\n" },
