@@ -140,24 +140,40 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export class AbortedError extends Error {
+  constructor() {
+    super("aborted");
+    this.name = "AbortedError";
+  }
+}
+
 export async function waitForChangeThenIdle(
   repoRoot: string,
   config?: Partial<WatchConfig>,
+  signal?: AbortSignal,
 ): Promise<void> {
   const cfg = { ...DEFAULT_WATCH_CONFIG, ...config };
   const baseline = fileSnapshot(repoRoot);
   let current = baseline;
 
+  const checkAbort = () => {
+    if (signal?.aborted) throw new AbortedError();
+  };
+
   // Phase 1: wait for any change
   while (snapshotsEqual(current, baseline)) {
+    checkAbort();
     await sleep(cfg.pollInterval * 1000);
+    checkAbort();
     current = fileSnapshot(repoRoot);
   }
 
   // Phase 2: wait for quiet
   let lastChangeTs = performance.now();
   while (true) {
+    checkAbort();
     await sleep(cfg.pollInterval * 1000);
+    checkAbort();
     const newSnap = fileSnapshot(repoRoot);
     if (!snapshotsEqual(newSnap, current)) {
       current = newSnap;

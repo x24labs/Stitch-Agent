@@ -189,6 +189,8 @@ stitch run claude --watch --jobs lint,test
 stitch run claude --watch --debounce 5     # custom quiet window
 ```
 
+Between runs, press `Enter` (or `r`) to re-run immediately without waiting for a file change. Press `q` to exit.
+
 ## Job filtering
 
 Stitch automatically skips jobs named `deploy*`, `publish*`, `release*`, `docker-build*`, `docker-push*`, `pages*`, `upload*`, `stitch*`.

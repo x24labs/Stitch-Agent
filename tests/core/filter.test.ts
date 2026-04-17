@@ -2,12 +2,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  applyFilter,
-  loadCache,
-  parseClassification,
-  saveCache,
-} from "../../src/core/filter.js";
+import { applyFilter, loadCache, parseClassification, saveCache } from "../../src/core/filter.js";
 import type { CIJob } from "../../src/core/models.js";
 
 function job(name: string): CIJob {

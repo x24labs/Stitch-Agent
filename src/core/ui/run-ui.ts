@@ -371,7 +371,7 @@ async function buildViewTree(agent: string, repo: string): Promise<ViewTree> {
 
   const welcomeStats = new TextRenderable(renderer, {
     id: "welcome-stats",
-    content: t`${fg(cBlue)(bold("Agent"))} ${dim(agent)}   ${fg(cCyan)("\u00b7")}   ${fg(cCyan)(bold("Repo"))} ${dim(repo)}   ${fg(cCyan)("\u00b7")}   ${fg(cPurple)(bold("v2.0.0"))}`,
+    content: t`${fg(cBlue)(bold("Agent"))} ${dim(agent)}   ${fg(cCyan)("\u00b7")}   ${fg(cCyan)(bold("Repo"))} ${dim(repo)}   ${fg(cCyan)("\u00b7")}   ${fg(cPurple)(bold("v2.0.1"))}`,
     alignSelf: "center",
     marginTop: 1,
   });
@@ -821,10 +821,26 @@ export class StitchUI {
     this.refresh();
   }
 
-  waitForRerun(): Promise<"rerun" | "quit"> {
+  waitForRerun(signal?: AbortSignal): Promise<"rerun" | "quit" | "aborted"> {
     return new Promise((resolve) => {
-      this.tuiState.onRerun = () => resolve("rerun");
-      this.tuiState.onQuit = () => resolve("quit");
+      if (signal?.aborted) {
+        resolve("aborted");
+        return;
+      }
+      const onAbort = () => {
+        this.tuiState.onRerun = null;
+        this.tuiState.onQuit = null;
+        resolve("aborted");
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this.tuiState.onRerun = () => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve("rerun");
+      };
+      this.tuiState.onQuit = () => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve("quit");
+      };
     });
   }
 

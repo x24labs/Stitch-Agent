@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.0.1, unreleased
+
+### Added
+
+- Watch mode: press `Enter` (or `r`) between runs to re-run immediately without waiting for a file change. `q` exits. Keybinding hint was already rendered in the footer; the race is now wired in `runWatchMode`.
+
+### Fixed
+
+- Watch mode no longer leaks background polling promises when a re-run is triggered. `waitForChangeThenIdle` accepts an `AbortSignal`; `ui.waitForRerun` does too.
+
 ## v2.0.0, 2026-04-16
 
 Full rewrite from Python to TypeScript. Distributed via npm, zero runtime dependency on Python.

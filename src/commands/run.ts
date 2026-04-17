@@ -10,6 +10,7 @@ import type { CIJob, GitSnapshot } from "../core/models.js";
 import { type RunReport, isCommittable, isPushable } from "../core/models.js";
 import { Runner, type RunnerConfig } from "../core/runner.js";
 import {
+  AbortedError,
   LockAcquireError,
   StitchLock,
   type WatchConfig,
@@ -405,11 +406,25 @@ async function runWatchMode(
     await runOnce();
 
     while (true) {
+      const abort = new AbortController();
+      const fsPromise = waitForChangeThenIdle(repoRoot, watchCfg, abort.signal)
+        .then(() => "fs" as const)
+        .catch((err) => {
+          if (err instanceof AbortedError) return "aborted" as const;
+          throw err;
+        });
+      const keyPromise = ui.waitForRerun(abort.signal);
+
+      let trigger: "fs" | "rerun" | "quit" | "aborted";
       try {
-        await waitForChangeThenIdle(repoRoot, watchCfg);
+        trigger = await Promise.race([fsPromise, keyPromise]);
       } catch {
+        abort.abort();
         break;
       }
+
+      abort.abort();
+      if (trigger === "quit") break;
       await runOnce();
     }
   } catch {

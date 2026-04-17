@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FixContext } from "../../src/core/models.js";
-import {
-  ClaudeCodeDriver,
-  handleStdoutLine,
-  parseEvent,
-} from "../../src/drivers/claude-code.js";
+import { ClaudeCodeDriver, handleStdoutLine, parseEvent } from "../../src/drivers/claude-code.js";
 
 function ctx(overrides: Partial<FixContext> = {}): FixContext {
   return {

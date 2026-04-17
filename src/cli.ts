@@ -9,7 +9,7 @@ const program = new Command();
 program
   .name("stitch")
   .description("Run your CI jobs locally. Fix failures with AI.")
-  .version("2.0.0");
+  .version("2.0.1");
 
 program
   .command("run")
