@@ -177,6 +177,9 @@ Agents:
 - `claude` - Claude Code CLI. Uses your Claude subscription.
 - `codex` - OpenAI Codex CLI. Uses your ChatGPT subscription.
 
+Debugging:
+- `STITCH_DEBUG=1` - print the stack trace when Stitch exits on an unexpected error.
+
 ## Watch mode
 
 Re-runs your CI whenever you stop editing for a few seconds. Reports only, never invokes the agent.

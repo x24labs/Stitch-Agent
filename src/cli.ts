@@ -106,6 +106,23 @@ program
     process.exit(code);
   });
 
+function formatError(err: unknown): string {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === "string") return err;
+  return "unexpected error";
+}
+
+function fail(err: unknown): never {
+  console.error(`stitch: ${formatError(err)}`);
+  if (process.env.STITCH_DEBUG && err instanceof Error && err.stack) {
+    console.error(err.stack);
+  }
+  process.exit(1);
+}
+
+process.on("unhandledRejection", fail);
+process.on("uncaughtException", fail);
+
 export function main(argv?: string[]) {
   program.parse(argv ?? process.argv);
 }

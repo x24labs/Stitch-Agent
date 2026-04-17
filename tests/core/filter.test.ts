@@ -2,7 +2,12 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { applyFilter, loadCache, saveCache } from "../../src/core/filter.js";
+import {
+  applyFilter,
+  loadCache,
+  parseClassification,
+  saveCache,
+} from "../../src/core/filter.js";
 import type { CIJob } from "../../src/core/models.js";
 
 function job(name: string): CIJob {
@@ -118,5 +123,58 @@ describe("applyFilter", () => {
     // allowlist admitted lint, exclude then skips it
     expect(result[0]?.skipReason).toContain("exclude");
     expect(result[1]?.skipReason).toContain("allowlist");
+  });
+});
+
+describe("parseClassification", () => {
+  it("parses clean JSON object", () => {
+    const raw = '{"lint": "verify", "deploy": "infra"}';
+    expect(parseClassification(raw, ["lint", "deploy"])).toEqual({
+      lint: "verify",
+      deploy: "infra",
+    });
+  });
+
+  it("strips markdown fences", () => {
+    const raw = '```json\n{"lint": "verify"}\n```';
+    expect(parseClassification(raw, ["lint"])).toEqual({ lint: "verify" });
+  });
+
+  it("strips bare ``` fences", () => {
+    const raw = '```\n{"lint": "verify"}\n```';
+    expect(parseClassification(raw, ["lint"])).toEqual({ lint: "verify" });
+  });
+
+  it("recovers from surrounding prose by slicing to first/last brace", () => {
+    const raw = 'Sure, here is the result: {"lint": "verify"} — done.';
+    expect(parseClassification(raw, ["lint"])).toEqual({ lint: "verify" });
+  });
+
+  it("returns null when no braces at all", () => {
+    expect(parseClassification("no JSON here", ["lint"])).toBeNull();
+  });
+
+  it("returns null for null JSON", () => {
+    expect(parseClassification("null", ["lint"])).toBeNull();
+  });
+
+  it("defaults missing jobs to verify", () => {
+    const raw = '{"lint": "verify"}';
+    expect(parseClassification(raw, ["lint", "test"])).toEqual({
+      lint: "verify",
+      test: "verify",
+    });
+  });
+
+  it("defaults invalid classification values to verify", () => {
+    const raw = '{"lint": "bogus", "deploy": "infra"}';
+    expect(parseClassification(raw, ["lint", "deploy"])).toEqual({
+      lint: "verify",
+      deploy: "infra",
+    });
+  });
+
+  it("returns null when even brace-sliced payload is unparseable", () => {
+    expect(parseClassification("{not json}", ["lint"])).toBeNull();
   });
 });

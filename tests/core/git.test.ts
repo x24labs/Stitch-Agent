@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { commit, snapshot } from "../../src/core/git.js";
+import { commit, push, snapshot } from "../../src/core/git.js";
 
 function git(args: string, cwd: string) {
   execSync(`git ${args}`, {
@@ -94,5 +94,53 @@ describe("git commit", () => {
     const result = commit(tmp, ["lint"]);
     expect(result.ok).toBe(false);
     expect(result.message).toBe("no changes to commit");
+  });
+});
+
+describe("git push", () => {
+  let tmp: string;
+  let remote: string;
+
+  beforeEach(() => {
+    tmp = join(tmpdir(), `stitch-push-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    remote = join(tmpdir(), `stitch-remote-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(tmp, { recursive: true });
+    mkdirSync(remote, { recursive: true });
+    git("init --bare", remote);
+    git("init", tmp);
+    git("checkout -b main", tmp);
+    git("config user.email test@test.com", tmp);
+    git("config user.name test", tmp);
+    writeFileSync(join(tmp, "file.txt"), "initial");
+    git("add .", tmp);
+    git("commit -m init", tmp);
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  });
+
+  it("fails when no remote is configured at all", () => {
+    const result = push(tmp);
+    expect(result.ok).toBe(false);
+    expect(result.error.length).toBeGreaterThan(0);
+  });
+
+  it("sets upstream and pushes when remote added but no upstream set", () => {
+    git(`remote add origin ${remote}`, tmp);
+    const result = push(tmp);
+    expect(result.ok).toBe(true);
+    expect(result.error).toBe("");
+  });
+
+  it("pushes via tracked upstream", () => {
+    git(`remote add origin ${remote}`, tmp);
+    git("push -u origin main", tmp);
+    writeFileSync(join(tmp, "file.txt"), "more");
+    git("add .", tmp);
+    git("commit -m followup", tmp);
+    const result = push(tmp);
+    expect(result.ok).toBe(true);
   });
 });

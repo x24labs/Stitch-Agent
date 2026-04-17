@@ -123,7 +123,10 @@ async function callCodex(prompt: string, repoRoot?: string): Promise<string | nu
   }
 }
 
-function parseClassification(raw: string, jobNames: string[]): Record<string, string> | null {
+export function parseClassification(
+  raw: string,
+  jobNames: string[],
+): Record<string, string> | null {
   let text = raw.trim();
   if (text.startsWith("```")) {
     const lines = text.split("\n").filter((ln) => !ln.startsWith("```"));

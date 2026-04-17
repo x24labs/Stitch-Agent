@@ -108,12 +108,12 @@ export class ClaudeCodeDriver implements AgentDriver {
   }
 }
 
-interface ParsedEvent {
+export interface ParsedEvent {
   kind: "text" | "tool_use" | "tool_result" | "result";
   content: string;
 }
 
-function handleStdoutLine(
+export function handleStdoutLine(
   line: string,
   activity: string[],
   resultText: string,
@@ -193,7 +193,7 @@ function parseUserEvent(data: Record<string, unknown>): ParsedEvent | null {
   return null;
 }
 
-function parseEvent(line: string): ParsedEvent | null {
+export function parseEvent(line: string): ParsedEvent | null {
   let data: Record<string, unknown>;
   try {
     data = JSON.parse(line);
