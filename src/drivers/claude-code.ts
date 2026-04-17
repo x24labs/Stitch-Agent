@@ -132,7 +132,7 @@ export class ClaudeCodeDriver implements AgentDriver {
   }
 }
 
-export interface ParsedEvent {
+interface ParsedEvent {
   kind: "text" | "tool_use" | "tool_result" | "result";
   content: string;
 }
