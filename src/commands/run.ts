@@ -396,11 +396,17 @@ async function runWatchMode(
   try {
     const runOnce = async () => {
       ui.initJobs(jobs);
-      const runner = new Runner(repoRoot, driver, config, undefined, ui.callback);
-      const report = await runner.run(jobs);
-      const watchSnap = snapshot(repoRoot);
-      recordRun(report, { repoRoot, agent: opts.agent, snap: watchSnap, commitSha: null });
-      ui.markDone(report, null, false);
+      const runController = new AbortController();
+      ui.setOnAbort(() => runController.abort());
+      try {
+        const runner = new Runner(repoRoot, driver, config, undefined, ui.callback);
+        const report = await runner.run(jobs, false, runController.signal);
+        const watchSnap = snapshot(repoRoot);
+        recordRun(report, { repoRoot, agent: opts.agent, snap: watchSnap, commitSha: null });
+        ui.markDone(report, null, false);
+      } finally {
+        ui.setOnAbort(null);
+      }
     };
 
     await runOnce();

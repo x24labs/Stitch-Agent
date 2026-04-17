@@ -5,6 +5,11 @@
 ### Added
 
 - Watch mode: press `Enter` (or `r`) between runs to re-run immediately without waiting for a file change. `q` exits. Keybinding hint was already rendered in the footer; the race is now wired in `runWatchMode`.
+- Watch mode: `Ctrl+C` during an in-flight run now aborts the current run and returns to watch idle, instead of killing the whole process. Running jobs are SIGKILLed, the active agent CLI child is killed, remaining jobs are marked `not_run` with reason `aborted`. Press `q` to exit fully.
+
+### Changed
+
+- `Runner.run(jobs, dryRun?, signal?)` now accepts an optional `AbortSignal` for cooperative cancellation. `AgentDriver.fix(context, signal?)` likewise. Existing callers that do not pass a signal are unaffected.
 
 ### Fixed
 

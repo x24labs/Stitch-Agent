@@ -189,7 +189,7 @@ stitch run claude --watch --jobs lint,test
 stitch run claude --watch --debounce 5     # custom quiet window
 ```
 
-Between runs, press `Enter` (or `r`) to re-run immediately without waiting for a file change. Press `q` to exit.
+Between runs, press `Enter` (or `r`) to re-run immediately without waiting for a file change. During a run, `Ctrl+C` aborts the current run and returns to watch idle; press `q` to exit fully.
 
 ## Job filtering
 

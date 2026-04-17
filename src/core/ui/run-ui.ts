@@ -109,6 +109,7 @@ class TuiState {
   pipelineStep = 0;
   onRerun: (() => void) | null = null;
   onQuit: (() => void) | null = null;
+  onAbort: (() => void) | null = null;
 
   constructor() {
     this.state = {
@@ -775,6 +776,10 @@ export class StitchUI {
     this.keypressHandler = (event) => {
       const name = event.name;
       if (name === "c" && event.ctrl) {
+        if (this.tuiState.state.phase !== "done" && this.tuiState.onAbort) {
+          this.tuiState.onAbort();
+          return;
+        }
         quit();
         return;
       }
@@ -819,6 +824,10 @@ export class StitchUI {
   markDone(report: RunReport, commitSha: string | null, pushed: boolean) {
     this.tuiState.markDone(report, commitSha, pushed);
     this.refresh();
+  }
+
+  setOnAbort(fn: (() => void) | null): void {
+    this.tuiState.onAbort = fn;
   }
 
   waitForRerun(signal?: AbortSignal): Promise<"rerun" | "quit" | "aborted"> {

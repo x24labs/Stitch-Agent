@@ -257,4 +257,46 @@ describe("Runner", () => {
       expect(exec.calls.get("test")).toBe(1);
     });
   });
+
+  describe("external abort signal", () => {
+    it("aborts in-flight jobs and marks them not_run", async () => {
+      const exec = new StubExecutor();
+      exec.results.set("lint", [execResult()]);
+      exec.delaysMs.set("lint", 500);
+      const drv = new StubDriver();
+      const r = runner(drv, exec);
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 20);
+      const report = await r.run([job("lint")], false, controller.signal);
+      expect(report.jobs[0]?.status).toBe("not_run");
+      expect(report.jobs[0]?.skipReason).toBe("aborted");
+    });
+
+    it("aborts driver fix and stops the attempt loop", async () => {
+      const exec = new StubExecutor();
+      exec.results.set("lint", [
+        execResult({ exitCode: 1 }),
+        execResult({ exitCode: 1 }),
+        execResult({ exitCode: 1 }),
+      ]);
+      const drv = new StubDriver();
+      drv.fixDelayMs = 500;
+      const r = runner(drv, exec, { maxAttempts: 3 });
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 20);
+      const report = await r.run([job("lint")], false, controller.signal);
+      expect(report.jobs[0]?.status).toBe("not_run");
+      expect(drv.calls).toHaveLength(1);
+    });
+
+    it("no abort = normal path", async () => {
+      const exec = new StubExecutor();
+      exec.results.set("lint", [execResult()]);
+      const drv = new StubDriver();
+      const r = runner(drv, exec);
+      const controller = new AbortController();
+      const report = await r.run([job("lint")], false, controller.signal);
+      expect(report.jobs[0]?.status).toBe("passed");
+    });
+  });
 });
