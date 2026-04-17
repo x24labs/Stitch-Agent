@@ -40,6 +40,8 @@ Stitch parses your CI configuration (GitLab CI, GitHub Actions, Bitbucket Pipeli
 
 ## Quick start
 
+**Prerequisite**: an agent CLI installed and logged in. Either [Claude Code](https://docs.claude.com/en/docs/claude-code/overview) (`npm i -g @anthropic-ai/claude-code`) or [OpenAI Codex CLI](https://github.com/openai/codex) (`npm i -g @openai/codex`). Stitch shells out to whichever you have.
+
 ```bash
 npx stitch-agent doctor                 # check your setup
 npx stitch-agent run claude --dry-run   # see what would run
@@ -52,6 +54,20 @@ Or install globally:
 npm install -g stitch-agent
 stitch run claude
 ```
+
+## See it in action
+
+<p align="center">
+  <img src="https://stitch-agent.dev/tui/stitch-run.gif" alt="Animated terminal recording of stitch run claude showing the TUI with pipeline stepper, job table, and agent driver panel" width="720" />
+</p>
+
+**Live run.** One command. Stitch parses your CI config, runs verify jobs locally, hands failures to Claude Code or Codex, and re-verifies the fix. All of it streams into a single terminal window: pipeline stepper at the top, live job table in the middle, driver panel showing what the agent is actually doing at the bottom.
+
+<p align="center">
+  <img src="https://stitch-agent.dev/tui/stitch-history.jpg" alt="Terminal screenshot of stitch history showing STITCH ASCII logo, agent info, and a table of recent runs with pass, fixed, and ongoing states" width="720" />
+</p>
+
+**Run history.** Every run is recorded. PASS streaks show verify jobs that keep working on their own, FIXED entries record when the agent resolved a failure (with attempt count and commit), and escalations the agent could not resolve are surfaced, not hidden. No dashboard, no account. Just a file on your machine.
 
 ## How it works
 
