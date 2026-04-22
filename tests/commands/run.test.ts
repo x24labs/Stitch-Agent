@@ -1,8 +1,23 @@
+import { execSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runRunCommand } from "../../src/commands/run.js";
+
+function git(args: string, cwd: string) {
+  execSync(`git ${args}`, {
+    cwd,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "test",
+      GIT_AUTHOR_EMAIL: "test@test.com",
+      GIT_COMMITTER_NAME: "test",
+      GIT_COMMITTER_EMAIL: "test@test.com",
+    },
+  });
+}
 
 describe("runRunCommand", () => {
   let tmp: string;
@@ -98,6 +113,38 @@ lint:
       expect(parsed).toHaveProperty("overall_status");
       expect(parsed).toHaveProperty("jobs");
     }
+  });
+
+  it("emits dirty-pre-run warning on stderr when working tree has changes", async () => {
+    git("init", tmp);
+    git("checkout -b main", tmp);
+    git("config user.email test@test.com", tmp);
+    git("config user.name test", tmp);
+    writeFileSync(join(tmp, "seed.txt"), "seed");
+    git("add .", tmp);
+    git("commit -m init", tmp);
+    writeFileSync(join(tmp, "seed.txt"), "dirty");
+
+    const originalErr = console.error;
+    let errOutput = "";
+    console.error = (...args: unknown[]) => {
+      errOutput += `${args.map(String).join(" ")}\n`;
+    };
+
+    await runRunCommand({
+      agent: "claude",
+      repo: tmp,
+      maxAttempts: 1,
+      output: "text",
+      dryRun: false,
+      failFast: false,
+      push: true,
+      watch: false,
+      debounce: 3.0,
+    });
+
+    console.error = originalErr;
+    expect(errOutput).toContain("uncommitted changes present");
   });
 
   it("returns 2 for nonexistent repo path", async () => {

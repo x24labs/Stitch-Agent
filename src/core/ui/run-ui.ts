@@ -11,7 +11,7 @@ import {
   fg,
   t,
 } from "@opentui/core";
-import type { CIJob, JobResult, RunReport } from "../models.js";
+import type { CIJob, CommitPushReason, JobResult, RunReport } from "../models.js";
 import type { RunnerCallback } from "../runner.js";
 import { createRenderer } from "./renderer.js";
 
@@ -98,6 +98,7 @@ interface AppState {
     elapsed: number;
     commitSha: string | null;
     pushed: boolean;
+    reason?: CommitPushReason;
   } | null;
 }
 
@@ -187,7 +188,12 @@ class TuiState {
     }
   }
 
-  markDone(report: RunReport, commitSha: string | null, pushed: boolean) {
+  markDone(
+    report: RunReport,
+    commitSha: string | null,
+    pushed: boolean,
+    reason?: CommitPushReason,
+  ) {
     if (commitSha) this.pipelineStep = 5;
     const passed = report.jobs.filter((j) => j.status === "passed").length;
     const failed = report.jobs.filter(
@@ -200,7 +206,7 @@ class TuiState {
       phase: "done",
       fixing: null,
       runCount: this.state.runCount + 1,
-      lastReport: { passed, failed, fixed: report.fixedJobs, elapsed, commitSha, pushed },
+      lastReport: { passed, failed, fixed: report.fixedJobs, elapsed, commitSha, pushed, reason },
     };
   }
 }
@@ -660,19 +666,51 @@ function updateErrorPanel(view: ViewTree, state: AppState, isDone: boolean): voi
 }
 
 function updateCommitPanel(view: ViewTree, state: AppState, isDone: boolean): void {
-  if (!isDone || !state.lastReport?.commitSha) {
+  if (!isDone || !state.lastReport) {
     view.runCommit.visible = false;
     return;
   }
-  const commitChunks = [
-    fg(cGreen)("*"),
-    dim(" committed "),
-    fg(cOrange)(bold(state.lastReport.commitSha.slice(0, 8))),
-    dim(` fix(stitch): ${state.lastReport.fixed.join(", ")}`),
-  ];
-  if (state.lastReport.pushed) commitChunks.push(fg(cGreen)(" pushed"));
-  view.runCommit.content = new StyledText(commitChunks);
+  const report = state.lastReport;
+  if (report.commitSha) {
+    const commitChunks = [
+      fg(cGreen)("*"),
+      dim(" committed "),
+      fg(cOrange)(bold(report.commitSha.slice(0, 8))),
+      dim(` fix(stitch): ${report.fixed.join(", ")}`),
+    ];
+    if (report.pushed) {
+      commitChunks.push(fg(cGreen)(" pushed"));
+    } else if (report.reason === "push_failed") {
+      commitChunks.push(fg(cRed)(" push failed"));
+    }
+    view.runCommit.content = new StyledText(commitChunks);
+    view.runCommit.visible = true;
+    return;
+  }
+  const skipMsg = commitSkipMessage(report.reason);
+  if (!skipMsg) {
+    view.runCommit.visible = false;
+    return;
+  }
+  view.runCommit.content = new StyledText([dim("* "), dim(skipMsg)]);
   view.runCommit.visible = true;
+}
+
+function commitSkipMessage(reason?: CommitPushReason): string | null {
+  switch (reason) {
+    case "dirty_pre_run":
+      return "skipped commit: uncommitted changes present before run";
+    case "run_failed":
+      return "skipped commit: run failed";
+    case "no_fixed_jobs":
+      return "no commit: no fixes applied";
+    case "nothing_staged":
+      return "skipped commit: nothing staged";
+    case "commit_failed":
+      return "commit failed";
+    default:
+      return null;
+  }
 }
 
 function buildStatusText(
@@ -821,8 +859,13 @@ export class StitchUI {
     }
   }
 
-  markDone(report: RunReport, commitSha: string | null, pushed: boolean) {
-    this.tuiState.markDone(report, commitSha, pushed);
+  markDone(
+    report: RunReport,
+    commitSha: string | null,
+    pushed: boolean,
+    reason?: CommitPushReason,
+  ) {
+    this.tuiState.markDone(report, commitSha, pushed, reason);
     this.refresh();
   }
 

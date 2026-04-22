@@ -130,7 +130,7 @@ What Stitch actually does, end to end:
 - **Native Claude Code skill.** Ships with a Claude Code skill. Install it once and Claude validates your code on its own: before every push, at the end of a task, before marking a todo complete, and when switching context. No command, no prompt, no flag. See [Claude Code integration](#claude-code-integration).
 - **Live TUI.** OpenTUI-based terminal interface with per-job progress, logs on demand, and stage grouping. Renders on any terminal; no ANSI flicker.
 - **Auto commit and push on green.** When the fix-loop lands, Stitch commits the change with a sensible message and pushes to the remote, so the CI fix closes the loop on its own. Opt out with `--no-push` or `push: false` in `.stitch.yml`.
-- **Watch mode.** Re-runs your CI on every save, with a debounce you control. Reports only, never invokes the agent.
+- **Watch mode.** Re-runs your CI on every save, with a debounce you control. Runs the full fix loop and auto-commits the green result, just like a normal `stitch run`.
 - **Zero-install-friendly.** `npx stitch-agent run claude` works without installing anything globally. No Python, no Docker, no account.
 - **JSON output for pipelines.** `--output json` gives you a machine-readable report if you want to wrap Stitch inside a larger tool.
 - **Prefix-match job filtering.** `--jobs test` picks up `test`, `test:unit`, `test-e2e`, `test_fast` with separator awareness, so you do not need to list every variant.
@@ -182,7 +182,7 @@ Debugging:
 
 ## Watch mode
 
-Re-runs your CI whenever you stop editing for a few seconds. Reports only, never invokes the agent.
+Re-runs your CI whenever you stop editing for a few seconds. Runs the full fix loop and auto-commits green results, just like a normal `stitch run`.
 
 ```bash
 stitch run claude --watch --jobs lint,test
@@ -190,6 +190,8 @@ stitch run claude --watch --debounce 5     # custom quiet window
 ```
 
 Between runs, press `Enter` (or `r`) to re-run immediately without waiting for a file change. During a run, `Ctrl+C` aborts the current run and returns to watch idle; press `q` to exit fully.
+
+After each successful iteration, Stitch commits the agent's edits with `fix(stitch): <jobs>` and pushes, honoring `push: true/false` in `.stitch.yml` and the `--no-push` flag. If the working tree has uncommitted changes when Stitch starts, it prints a one-line warning on stderr and skips auto-commit for that session to avoid stepping on work in progress.
 
 ## Job filtering
 

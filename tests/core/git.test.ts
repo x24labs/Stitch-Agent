@@ -88,12 +88,45 @@ describe("git commit", () => {
     expect(result.ok).toBe(true);
     expect(result.message).toBe("fix(stitch): lint, test");
     expect(result.sha.length).toBeGreaterThan(0);
+    expect(result.reason).toBe("ok");
   });
 
   it("returns ok=false when nothing to commit", () => {
     const result = commit(tmp, ["lint"]);
     expect(result.ok).toBe(false);
     expect(result.message).toBe("no changes to commit");
+    expect(result.reason).toBe("nothing_staged");
+  });
+
+  it("stages and commits new (untracked) files", () => {
+    writeFileSync(join(tmp, "brand-new.ts"), "export const x = 1;");
+    const result = commit(tmp, ["test"]);
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBe("ok");
+    const tracked = execSync("git ls-files brand-new.ts", { cwd: tmp }).toString().trim();
+    expect(tracked).toBe("brand-new.ts");
+  });
+
+  it("stages deletions", () => {
+    rmSync(join(tmp, "file.txt"));
+    const result = commit(tmp, ["cleanup"]);
+    expect(result.ok).toBe(true);
+    const tracked = execSync("git ls-files file.txt", { cwd: tmp }).toString().trim();
+    expect(tracked).toBe("");
+  });
+
+  it("respects .gitignore", () => {
+    writeFileSync(join(tmp, ".gitignore"), "dist/\n");
+    git("add .gitignore", tmp);
+    git("commit -m add-ignore", tmp);
+    mkdirSync(join(tmp, "dist"), { recursive: true });
+    writeFileSync(join(tmp, "dist", "bundle.js"), "ignored");
+    writeFileSync(join(tmp, "tracked.ts"), "kept");
+    const result = commit(tmp, ["build"]);
+    expect(result.ok).toBe(true);
+    const tracked = execSync("git ls-files", { cwd: tmp }).toString();
+    expect(tracked).not.toContain("dist/bundle.js");
+    expect(tracked).toContain("tracked.ts");
   });
 });
 

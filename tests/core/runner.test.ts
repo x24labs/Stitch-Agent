@@ -24,6 +24,7 @@ describe("Runner", () => {
     const report = await r.run([job("lint")]);
     expect(report.jobs[0]?.status).toBe("passed");
     expect(report.jobs[0]?.attempts).toBe(1);
+    expect(report.jobs[0]?.filesModified).toBe(false);
     expect(drv.calls).toHaveLength(0);
   });
 
@@ -35,7 +36,28 @@ describe("Runner", () => {
     const report = await r.run([job("lint")]);
     expect(report.jobs[0]?.status).toBe("passed");
     expect(report.jobs[0]?.attempts).toBe(2);
+    expect(report.jobs[0]?.filesModified).toBe(true);
     expect(drv.calls).toHaveLength(1);
+  });
+
+  it("filesModified false when driver refuses", async () => {
+    const exec = new StubExecutor();
+    exec.results.set("lint", [execResult({ log: "fail", exitCode: 1 })]);
+    const drv = new StubDriver();
+    drv.outcomes = [{ applied: false, reason: "cannot fix", driverLog: "" }];
+    const r = runner(drv, exec);
+    const report = await r.run([job("lint")]);
+    expect(report.jobs[0]?.status).toBe("escalated");
+    expect(report.jobs[0]?.filesModified).toBe(false);
+  });
+
+  it("fixedJobs includes a job fixed on attempt 1 via driver-applied edits before retry", async () => {
+    const exec = new StubExecutor();
+    exec.results.set("lint", [execResult({ log: "fail", exitCode: 1 }), execResult()]);
+    const drv = new StubDriver();
+    const r = runner(drv, exec);
+    const report = await r.run([job("lint")]);
+    expect(report.fixedJobs).toEqual(["lint"]);
   });
 
   it("job exhausts attempts", async () => {

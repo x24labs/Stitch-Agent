@@ -6,7 +6,7 @@ import { ConfigError, type StitchConfig, loadConfig } from "../core/config.js";
 import { applyFilter, classifyWithLLM, loadCache, saveCache } from "../core/filter.js";
 import { commit, push, snapshot } from "../core/git.js";
 import { recordRun } from "../core/history.js";
-import type { CIJob, GitSnapshot } from "../core/models.js";
+import type { CIJob, CommitPushReason, GitSnapshot } from "../core/models.js";
 import { type RunReport, isCommittable, isPushable } from "../core/models.js";
 import { Runner, type RunnerConfig } from "../core/runner.js";
 import {
@@ -77,6 +77,7 @@ function buildDriver(agent: string): AgentDriver | null {
 interface CommitPushResult {
   sha: string | null;
   pushed: boolean;
+  reason: CommitPushReason;
 }
 
 function autoCommitPush(
@@ -85,20 +86,20 @@ function autoCommitPush(
   report: RunReport,
   noPush: boolean,
 ): CommitPushResult {
-  if (!isCommittable(snap) || report.overallStatus !== "passed" || report.fixedJobs.length === 0) {
-    return { sha: null, pushed: false };
-  }
+  if (!isCommittable(snap)) return { sha: null, pushed: false, reason: "dirty_pre_run" };
+  if (report.overallStatus !== "passed") return { sha: null, pushed: false, reason: "run_failed" };
+  if (report.fixedJobs.length === 0) return { sha: null, pushed: false, reason: "no_fixed_jobs" };
 
   const cr = commit(repoRoot, report.fixedJobs);
-  if (!cr.ok) return { sha: null, pushed: false };
+  if (!cr.ok) return { sha: null, pushed: false, reason: cr.reason as CommitPushReason };
 
-  let pushed = false;
-  if (!noPush && isPushable(snap)) {
-    const pr = push(repoRoot);
-    pushed = pr.ok;
+  if (noPush || !isPushable(snap)) {
+    return { sha: cr.sha, pushed: false, reason: "ok" };
   }
 
-  return { sha: cr.sha, pushed };
+  const pr = push(repoRoot);
+  if (!pr.ok) return { sha: cr.sha, pushed: false, reason: "push_failed" };
+  return { sha: cr.sha, pushed: true, reason: "ok" };
 }
 
 async function parseJobs(repoRoot: string): Promise<CIJob[] | 2> {
@@ -283,9 +284,9 @@ async function runTuiMode(
     ui.initJobs(jobs);
     const runner = new Runner(repoRoot, driver, config, undefined, ui.callback);
     const report = await runner.run(jobs);
-    const { sha, pushed } = autoCommitPush(repoRoot, currentSnap, report, noPush);
+    const { sha, pushed, reason } = autoCommitPush(repoRoot, currentSnap, report, noPush);
     recordRun(report, { repoRoot, agent: opts.agent, snap: currentSnap, commitSha: sha });
-    ui.markDone(report, sha, pushed);
+    ui.markDone(report, sha, pushed, reason);
     lastExitCode = report.exitCode();
   };
 
@@ -322,6 +323,15 @@ export async function runRunCommand(rawOpts: RunOptions): Promise<number> {
   if (!existsSync(repoRoot)) {
     console.error(`Error: repo path not found: ${repoRoot}`);
     return 2;
+  }
+
+  if (!rawOpts.dryRun && rawOpts.output !== "json") {
+    const preSnap = snapshot(repoRoot);
+    if (preSnap.branch !== null && !preSnap.clean) {
+      console.error(
+        "stitch: uncommitted changes present in working tree; auto-commit will be skipped for this run",
+      );
+    }
   }
 
   const fileConfigOrCode = loadConfigSafe(repoRoot);
@@ -395,15 +405,16 @@ async function runWatchMode(
 
   try {
     const runOnce = async () => {
+      const preSnap = snapshot(repoRoot);
       ui.initJobs(jobs);
       const runController = new AbortController();
       ui.setOnAbort(() => runController.abort());
       try {
         const runner = new Runner(repoRoot, driver, config, undefined, ui.callback);
         const report = await runner.run(jobs, false, runController.signal);
-        const watchSnap = snapshot(repoRoot);
-        recordRun(report, { repoRoot, agent: opts.agent, snap: watchSnap, commitSha: null });
-        ui.markDone(report, null, false);
+        const { sha, pushed, reason } = autoCommitPush(repoRoot, preSnap, report, !opts.push);
+        recordRun(report, { repoRoot, agent: opts.agent, snap: preSnap, commitSha: sha });
+        ui.markDone(report, sha, pushed, reason);
       } finally {
         ui.setOnAbort(null);
       }

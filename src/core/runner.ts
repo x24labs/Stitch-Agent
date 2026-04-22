@@ -46,6 +46,7 @@ function notRunResult(name: string): JobResult {
     driver: null,
     errorLog: "",
     skipReason: null,
+    filesModified: false,
   };
 }
 
@@ -55,6 +56,7 @@ export class Runner {
   private config: RunnerConfig;
   private executor: JobExecutor;
   private cb: RunnerCallback;
+  private appliedJobs: Set<string> = new Set();
 
   constructor(
     repoRoot: string,
@@ -72,6 +74,7 @@ export class Runner {
 
   async run(jobs: CIJob[], dryRun = false, signal?: AbortSignal): Promise<RunReport> {
     const results = new Map<string, JobResult>();
+    this.appliedJobs = new Set<string>();
     const runnable = this.partitionJobs(jobs, dryRun, results);
 
     if (runnable.length !== 0) {
@@ -152,6 +155,7 @@ export class Runner {
       this.escalateJobs(failed, attempt, results, outcome.reason);
       return null;
     }
+    for (const [job] of failed) this.appliedJobs.add(job.name);
     return [...failed.map(([job]) => job), ...cancelled];
   }
 
@@ -165,6 +169,7 @@ export class Runner {
         driver: null,
         errorLog: "",
         skipReason: "aborted",
+        filesModified: this.appliedJobs.has(job.name),
       };
       results.set(job.name, result);
       this.cb.jobFinished(job.name, result);
@@ -229,6 +234,7 @@ export class Runner {
           driver: null,
           errorLog: "",
           skipReason: null,
+          filesModified: this.appliedJobs.has(job.name),
         };
         results.set(job.name, result);
         this.cb.jobFinished(job.name, result);
@@ -254,6 +260,7 @@ export class Runner {
         driver: this.driver.name,
         errorLog: `${prefix}${log.slice(-ERROR_LOG_TAIL_CHARS)}`,
         skipReason: null,
+        filesModified: this.appliedJobs.has(job.name),
       };
       results.set(job.name, result);
       this.cb.jobFinished(job.name, result);
@@ -271,6 +278,7 @@ export class Runner {
           driver: null,
           errorLog: "",
           skipReason: job.skipReason,
+          filesModified: false,
         });
       } else if (dryRun) {
         results.set(job.name, notRunResult(job.name));

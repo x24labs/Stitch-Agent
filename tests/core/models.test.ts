@@ -10,6 +10,7 @@ function result(overrides: Partial<JobResult> = {}): JobResult {
     driver: null,
     errorLog: "",
     skipReason: null,
+    filesModified: false,
     ...overrides,
   };
 }
@@ -50,17 +51,27 @@ describe("RunReport", () => {
   });
 
   describe("fixedJobs", () => {
-    it("returns jobs that passed after more than one attempt", () => {
+    it("returns jobs that passed after a driver applied edits", () => {
       const report = new RunReport([
-        result({ name: "lint", status: "passed", attempts: 1 }),
-        result({ name: "test", status: "passed", attempts: 3 }),
-        result({ name: "build", status: "escalated", attempts: 2 }),
+        result({ name: "lint", status: "passed", filesModified: false }),
+        result({ name: "test", status: "passed", filesModified: true }),
+        result({ name: "build", status: "escalated", filesModified: true }),
       ]);
       expect(report.fixedJobs).toEqual(["test"]);
     });
 
-    it("returns empty array when no jobs were fixed", () => {
-      const report = new RunReport([result({ name: "lint", status: "passed", attempts: 1 })]);
+    it("ignores attempts count when deriving fixedJobs", () => {
+      const report = new RunReport([
+        result({ name: "a", status: "passed", attempts: 3, filesModified: false }),
+        result({ name: "b", status: "passed", attempts: 1, filesModified: true }),
+      ]);
+      expect(report.fixedJobs).toEqual(["b"]);
+    });
+
+    it("returns empty array when no jobs modified files", () => {
+      const report = new RunReport([
+        result({ name: "lint", status: "passed", filesModified: false }),
+      ]);
       expect(report.fixedJobs).toEqual([]);
     });
   });
@@ -91,6 +102,7 @@ describe("RunReport", () => {
       expect(jobs[0]?.name).toBe("lint");
       expect(jobs[0]?.skip_reason).toBeNull();
       expect(jobs[0]?.error_log).toBe("");
+      expect(jobs[0]?.files_modified).toBe(false);
     });
   });
 });

@@ -14,6 +14,11 @@
 ### Fixed
 
 - Watch mode no longer leaks background polling promises when a re-run is triggered. `waitForChangeThenIdle` accepts an `AbortSignal`; `ui.waitForRerun` does too.
+- Watch mode now runs the full auto-commit/push path after every successful iteration, matching `stitch run` behavior. Previously it silently skipped commit and push.
+- `git commit` now stages with `git add -A` so new files created by the agent (new tests, new modules) are included. Previously `git add -u` dropped them silently.
+- `autoCommitPush` returns a structured `reason` so the UI can explain why a commit or push did not happen (`dirty_pre_run`, `run_failed`, `no_fixed_jobs`, `nothing_staged`, `commit_failed`, `push_failed`).
+- When Stitch starts with uncommitted changes in the working tree, it prints a one-line warning on stderr and skips auto-commit for the run instead of silently bailing.
+- `RunReport.fixedJobs` is now derived from `filesModified` (set from the driver's `FixOutcome.applied`) instead of `attempts > 1`, so jobs the agent edited still trigger a commit even if they passed on the first re-run.
 
 ## v2.0.0, 2026-04-16
 
