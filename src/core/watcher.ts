@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
 import {
-  existsSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -193,15 +192,14 @@ export async function waitForChangeThenIdle(
 // Self-healing Stitch watch lock
 // ============================================================================
 
-export const HEARTBEAT_INTERVAL_MS = 5_000;
-export const HEARTBEAT_STALE_MS = 30_000;
-export const TERM_GRACE_MS = 2_000;
-export const KILL_GRACE_MS = 1_000;
-export const LEGACY_STALE_AGE_MS = 600_000;
-export const LOCKFILE_NAME = ".stitch.lock";
-export const LOCKFILE_TMP = ".stitch.lock.tmp";
-const STITCH_CMDLINE_RE =
-  /(?:^|[\/\s])(?:node|bun)\b.*\bstitch\b|(?:^|[\/\s])stitch(?:\s|$)/;
+const HEARTBEAT_INTERVAL_MS = 5_000;
+const HEARTBEAT_STALE_MS = 30_000;
+const TERM_GRACE_MS = 2_000;
+const KILL_GRACE_MS = 1_000;
+const LEGACY_STALE_AGE_MS = 600_000;
+const LOCKFILE_NAME = ".stitch.lock";
+const LOCKFILE_TMP = ".stitch.lock.tmp";
+const STITCH_CMDLINE_RE = /(?:^|[\/\s])(?:node|bun)\b.*\bstitch\b|(?:^|[\/\s])stitch(?:\s|$)/;
 
 export class LockAcquireError extends Error {
   constructor(message: string) {
@@ -218,7 +216,7 @@ export interface LockfileV1 {
   heartbeatAt: number;
 }
 
-export type ParsedLockfile =
+type ParsedLockfile =
   | { kind: "v1"; data: LockfileV1 }
   | { kind: "legacy"; pid: number; mtime: number }
   | { kind: "malformed" }
@@ -241,7 +239,7 @@ export interface StitchLockOptions {
   registerSignals?: boolean;
 }
 
-export function pidAlive(pid: number): boolean {
+function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -255,7 +253,7 @@ export function pidAlive(pid: number): boolean {
   }
 }
 
-export function probeCmdline(pid: number): string | null {
+function probeCmdline(pid: number): string | null {
   try {
     const raw = readFileSync(`/proc/${pid}/cmdline`, "utf-8");
     const joined = raw.replace(/\0+$/, "").replace(/\0/g, " ").trim();
@@ -370,7 +368,7 @@ interface TerminateDeps {
   killGraceMs: number;
 }
 
-export function terminateHung(pid: number, deps: TerminateDeps): void {
+function terminateHung(pid: number, deps: TerminateDeps): void {
   deps.signal(pid, "SIGTERM");
   let waited = 0;
   while (waited < deps.termGraceMs) {
@@ -388,11 +386,11 @@ export function terminateHung(pid: number, deps: TerminateDeps): void {
   throw new LockAcquireError(buildTerminationFailedMessage(pid));
 }
 
-export function buildBlockMessage(pid: number): string {
+function buildBlockMessage(pid: number): string {
   return `Another Stitch watch is already running (pid ${pid}).`;
 }
 
-export function buildTerminationFailedMessage(pid: number): string {
+function buildTerminationFailedMessage(pid: number): string {
   return `Could not terminate hung Stitch (pid ${pid}) after SIGTERM+SIGKILL. Check process ownership and system state.`;
 }
 
@@ -407,9 +405,9 @@ function safeUnlink(path: string): void {
 export class StitchLock {
   private readonly path: string;
   private readonly tmpPath: string;
-  private readonly opts: Required<
-    Omit<StitchLockOptions, "registerSignals">
-  > & { registerSignals: boolean };
+  private readonly opts: Required<Omit<StitchLockOptions, "registerSignals">> & {
+    registerSignals: boolean;
+  };
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private released = false;
   private lastState: LockfileV1 | null = null;
@@ -481,16 +479,10 @@ export class StitchLock {
       }
       // block
       const holderPid =
-        parsed.kind === "v1"
-          ? parsed.data.pid
-          : parsed.kind === "legacy"
-            ? parsed.pid
-            : 0;
+        parsed.kind === "v1" ? parsed.data.pid : parsed.kind === "legacy" ? parsed.pid : 0;
       throw new LockAcquireError(buildBlockMessage(holderPid));
     }
-    throw new LockAcquireError(
-      "Stitch could not acquire the watch lock after repeated attempts.",
-    );
+    throw new LockAcquireError("Stitch could not acquire the watch lock after repeated attempts.");
   }
 
   release(): void {
@@ -521,8 +513,7 @@ export class StitchLock {
   }
 
   private writeFresh(): void {
-    const cmdline =
-      this.opts.probeCmdline(process.pid) ?? process.argv.join(" ");
+    const cmdline = this.opts.probeCmdline(process.pid) ?? process.argv.join(" ");
     const now = this.opts.now();
     const body: LockfileV1 = {
       version: 1,
@@ -555,9 +546,4 @@ export class StitchLock {
       this.heartbeatTimer.unref();
     }
   }
-}
-
-// Back-compat helper used by existing callers/tests.
-export function lockfileExists(repoRoot: string): boolean {
-  return existsSync(join(repoRoot, LOCKFILE_NAME));
 }

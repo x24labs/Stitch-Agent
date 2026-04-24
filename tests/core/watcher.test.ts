@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type CmdlineProbe,
-  type LockfileV1,
   LockAcquireError,
+  type LockfileV1,
   type PidChecker,
   type Signaler,
   StitchLock,
@@ -306,7 +306,13 @@ describe("decide", () => {
       decide(
         {
           kind: "v1",
-          data: { version: 1, pid: 42, cmdline: STITCH_CMDLINE, startedAt: 0, heartbeatAt: now() - 1000 },
+          data: {
+            version: 1,
+            pid: 42,
+            cmdline: STITCH_CMDLINE,
+            startedAt: 0,
+            heartbeatAt: now() - 1000,
+          },
         },
         {
           now,
@@ -324,7 +330,13 @@ describe("decide", () => {
       decide(
         {
           kind: "v1",
-          data: { version: 1, pid: 42, cmdline: STITCH_CMDLINE, startedAt: 0, heartbeatAt: now() - 1000 },
+          data: {
+            version: 1,
+            pid: 42,
+            cmdline: STITCH_CMDLINE,
+            startedAt: 0,
+            heartbeatAt: now() - 1000,
+          },
         },
         {
           now,
@@ -342,7 +354,13 @@ describe("decide", () => {
       decide(
         {
           kind: "v1",
-          data: { version: 1, pid: 42, cmdline: STITCH_CMDLINE, startedAt: 0, heartbeatAt: now() - 60_000 },
+          data: {
+            version: 1,
+            pid: 42,
+            cmdline: STITCH_CMDLINE,
+            startedAt: 0,
+            heartbeatAt: now() - 60_000,
+          },
         },
         {
           now,
@@ -360,7 +378,13 @@ describe("decide", () => {
       decide(
         {
           kind: "v1",
-          data: { version: 1, pid: 42, cmdline: STITCH_CMDLINE, startedAt: 0, heartbeatAt: now() - 5_000 },
+          data: {
+            version: 1,
+            pid: 42,
+            cmdline: STITCH_CMDLINE,
+            startedAt: 0,
+            heartbeatAt: now() - 5_000,
+          },
         },
         {
           now,
@@ -378,7 +402,13 @@ describe("decide", () => {
       decide(
         {
           kind: "v1",
-          data: { version: 1, pid: 42, cmdline: STITCH_CMDLINE, startedAt: 0, heartbeatAt: now() - 5_000 },
+          data: {
+            version: 1,
+            pid: 42,
+            cmdline: STITCH_CMDLINE,
+            startedAt: 0,
+            heartbeatAt: now() - 5_000,
+          },
         },
         {
           now,
@@ -674,28 +704,23 @@ describe("StitchLock acquire/release", () => {
   });
 
   it("heartbeat advances heartbeatAt via rename", async () => {
-    vi.useFakeTimers();
-    try {
-      let t = 1_000_000;
-      const lock = mkLock(
-        tmp,
-        {
-          now: () => t,
-          pidAlive: () => false,
-          probeCmdline: () => STITCH_CMDLINE,
-        },
-        { heartbeatIntervalMs: 5_000 },
-      );
-      lock.acquire();
-      const first = JSON.parse(readFileSync(lockPath, "utf-8"));
-      expect(first.heartbeatAt).toBe(1_000_000);
-      t = 1_006_000;
-      await vi.advanceTimersByTimeAsync(5_000);
-      const second = JSON.parse(readFileSync(lockPath, "utf-8"));
-      expect(second.heartbeatAt).toBeGreaterThan(first.heartbeatAt);
-      lock.release();
-    } finally {
-      vi.useRealTimers();
-    }
+    let t = 1_000_000;
+    const lock = mkLock(
+      tmp,
+      {
+        now: () => t,
+        pidAlive: () => false,
+        probeCmdline: () => STITCH_CMDLINE,
+      },
+      { heartbeatIntervalMs: 10 },
+    );
+    lock.acquire();
+    const first = JSON.parse(readFileSync(lockPath, "utf-8"));
+    expect(first.heartbeatAt).toBe(1_000_000);
+    t = 1_006_000;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const second = JSON.parse(readFileSync(lockPath, "utf-8"));
+    expect(second.heartbeatAt).toBeGreaterThan(first.heartbeatAt);
+    lock.release();
   });
 });
