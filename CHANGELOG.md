@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Watch mode: `.stitch.lock` self-heals when a previous Stitch run crashed, was `SIGKILL`ed, or left a stale lockfile after a PID got recycled. The new lockfile stores a small JSON record with a 5-second heartbeat; on the next start, Stitch automatically reclaims the lock when the pid is dead, the pid was recycled to an unrelated process, or the heartbeat is older than 30 seconds (after a bounded `SIGTERM` + `SIGKILL` escalation). The old "delete `.stitch.lock` manually" instruction is gone. Real double-runs are still blocked.
 - Watch mode no longer leaks background polling promises when a re-run is triggered. `waitForChangeThenIdle` accepts an `AbortSignal`; `ui.waitForRerun` does too.
 - Watch mode now runs the full auto-commit/push path after every successful iteration, matching `stitch run` behavior. Previously it silently skipped commit and push.
 - `git commit` now stages with `git add -A` so new files created by the agent (new tests, new modules) are included. Previously `git add -u` dropped them silently.

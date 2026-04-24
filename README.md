@@ -191,6 +191,8 @@ stitch run claude --watch --debounce 5     # custom quiet window
 
 Between runs, press `Enter` (or `r`) to re-run immediately without waiting for a file change. During a run, `Ctrl+C` aborts the current run and returns to watch idle; press `q` to exit fully.
 
+If a previous Stitch run crashed or was killed, Stitch reclaims the watch lock automatically on the next start. No manual cleanup needed.
+
 After each successful iteration, Stitch commits the agent's edits with `fix(stitch): <jobs>` and pushes, honoring `push: true/false` in `.stitch.yml` and the `--no-push` flag. If the working tree has uncommitted changes when Stitch starts, it prints a one-line warning on stderr and skips auto-commit for that session to avoid stepping on work in progress.
 
 ## Job filtering
