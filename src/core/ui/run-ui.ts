@@ -107,6 +107,7 @@ const PIPELINE_STEPS = ["Detect", "Parse", "Classify", "Execute", "Fix", "Commit
 class TuiState {
   state: AppState;
   loadingMsg = "Detecting CI configuration...";
+  notice = "";
   pipelineStep = 0;
   onRerun: (() => void) | null = null;
   onQuit: (() => void) | null = null;
@@ -334,6 +335,7 @@ interface ViewTree {
   welcomeStats: TextRenderable;
   welcomePipeline: TextRenderable;
   welcomeLoading: TextRenderable;
+  welcomeNotice: TextRenderable;
   // Running/Done phase
   runBox: BoxRenderable;
   runLogo: ASCIIFontRenderable;
@@ -400,6 +402,14 @@ async function buildViewTree(agent: string, repo: string): Promise<ViewTree> {
     live: true,
   });
   welcomeBox.add(welcomeLoading);
+
+  const welcomeNotice = new TextRenderable(renderer, {
+    id: "welcome-notice",
+    content: "",
+    alignSelf: "center",
+    marginTop: 1,
+  });
+  welcomeBox.add(welcomeNotice);
 
   // ── Run screen ────────────────────────────────────────────────────────
   const runBox = new BoxRenderable(renderer, {
@@ -487,6 +497,7 @@ async function buildViewTree(agent: string, repo: string): Promise<ViewTree> {
     welcomeStats,
     welcomePipeline,
     welcomeLoading,
+    welcomeNotice,
     runBox,
     runLogo,
     runInfo,
@@ -505,6 +516,9 @@ async function buildViewTree(agent: string, repo: string): Promise<ViewTree> {
 function updateWelcome(view: ViewTree, tuiState: TuiState, spinner: Spinner): void {
   view.welcomePipeline.content = buildPipelineText(tuiState.pipelineStep);
   view.welcomeLoading.content = t`${fg(cCyan)(spinner.frame)}  ${dim(tuiState.loadingMsg)}`;
+  view.welcomeNotice.content = tuiState.notice
+    ? t`${fg(cOrange)("⚠")}  ${fg(cOrange)(tuiState.notice)}`
+    : "";
 }
 
 function updateRunView(
@@ -776,6 +790,11 @@ export class StitchUI {
   setLoading(msg: string, step?: number) {
     this.tuiState.loadingMsg = msg;
     if (step !== undefined) this.tuiState.pipelineStep = step;
+    this.refresh();
+  }
+
+  setNotice(msg: string) {
+    this.tuiState.notice = msg;
     this.refresh();
   }
 
