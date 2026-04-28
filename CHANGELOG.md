@@ -1,6 +1,12 @@
 # Changelog
 
-## v2.0.1, unreleased
+## v2.0.2, unreleased
+
+### Added
+
+- On startup, `stitch run` and `stitch run --watch` automatically add `.stitch/` and `.stitch.lock` to the repo's `.gitignore` if missing. Prevents Stitch's history files (`history.jsonl`, `history-head.json`, `jobs.json`) and the watch lockfile from polluting `git status` and being accidentally committed during watch-mode auto-commit. Idempotent: existing entries are preserved, no duplicates are written. Creates `.gitignore` if absent.
+
+## v2.0.1, 2026-04-28
 
 ### Added
 

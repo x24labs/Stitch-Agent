@@ -1,6 +1,6 @@
 {
   "name": "stitch-agent",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Skill-first local CI runner -- run your CI jobs locally and fix failures with AI",
   "type": "module",
   "bin": {

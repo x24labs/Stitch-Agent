@@ -5,6 +5,7 @@ import { CIParseError, parseCIConfig } from "../core/ci-parser.js";
 import { ConfigError, type StitchConfig, loadConfig } from "../core/config.js";
 import { applyFilter, classifyWithLLM, loadCache, saveCache } from "../core/filter.js";
 import { commit, push, snapshot } from "../core/git.js";
+import { ensureStitchIgnored } from "../core/gitignore.js";
 import { recordRun } from "../core/history.js";
 import type { CIJob, CommitPushReason, GitSnapshot } from "../core/models.js";
 import { type RunReport, isCommittable, isPushable } from "../core/models.js";
@@ -347,6 +348,12 @@ export async function runRunCommand(rawOpts: RunOptions): Promise<number> {
   if (!existsSync(repoRoot)) {
     console.error(`Error: repo path not found: ${repoRoot}`);
     return 2;
+  }
+
+  try {
+    ensureStitchIgnored(repoRoot);
+  } catch {
+    // Non-fatal: a read-only repo or permission error should not block the run.
   }
 
   let uncommitted = false;
