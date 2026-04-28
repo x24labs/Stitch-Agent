@@ -15,9 +15,12 @@ export class CodexDriver implements AgentDriver {
     this.timeoutSeconds = timeoutSeconds;
   }
 
-  async fix(context: FixContext): Promise<FixOutcome> {
+  async fix(context: FixContext, signal?: AbortSignal): Promise<FixOutcome> {
     if (!which(this.binary)) {
       return { applied: false, reason: `${this.binary} CLI not found in PATH`, driverLog: "" };
+    }
+    if (signal?.aborted) {
+      return { applied: false, reason: `${this.binary} aborted before start`, driverLog: "" };
     }
 
     const prompt = buildPrompt(context);
@@ -30,9 +33,28 @@ export class CodexDriver implements AgentDriver {
       const chunks: Buffer[] = [];
       let done = false;
 
+      const onAbort = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+        resolve({
+          applied: false,
+          reason: `${this.binary} aborted`,
+          driverLog: Buffer.concat(chunks).toString("utf-8").slice(-2000),
+        });
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+
       const timer = setTimeout(() => {
         if (!done) {
           done = true;
+          signal?.removeEventListener("abort", onAbort);
           try {
             proc.kill("SIGKILL");
           } catch {
@@ -53,6 +75,7 @@ export class CodexDriver implements AgentDriver {
         if (done) return;
         done = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         const log = Buffer.concat(chunks).toString("utf-8");
         const logTail = log.slice(-2000);
 
@@ -76,6 +99,7 @@ export class CodexDriver implements AgentDriver {
         if (done) return;
         done = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         resolve({
           applied: false,
           reason: `failed to spawn ${this.binary}: ${err}`,

@@ -1,6 +1,16 @@
 /** Outcome of a single job execution. */
 export type JobStatus = "passed" | "escalated" | "skipped" | "not_run" | "failed";
 
+/** Reason for the outcome of the auto commit/push path after a run. */
+export type CommitPushReason =
+  | "ok"
+  | "dirty_pre_run"
+  | "run_failed"
+  | "no_fixed_jobs"
+  | "nothing_staged"
+  | "commit_failed"
+  | "push_failed";
+
 /** A CI job parsed from `.gitlab-ci.yml` or similar config. */
 export interface CIJob {
   name: string;
@@ -37,6 +47,8 @@ export interface JobResult {
   driver: string | null;
   errorLog: string;
   skipReason: string | null;
+  /** True when the driver applied file edits for this job during the fix loop. */
+  filesModified: boolean;
 }
 
 /** Output from executing a shell command locally. */
@@ -61,6 +73,7 @@ export interface CommitResult {
   ok: boolean;
   sha: string;
   message: string;
+  reason: "ok" | "nothing_staged" | "commit_failed";
 }
 
 /** Outcome of a `git push` operation. */
@@ -90,7 +103,7 @@ export class RunReport {
   }
 
   get fixedJobs(): string[] {
-    return this.jobs.filter((j) => j.status === "passed" && j.attempts > 1).map((j) => j.name);
+    return this.jobs.filter((j) => j.status === "passed" && j.filesModified).map((j) => j.name);
   }
 
   get overallStatus(): "passed" | "failed" {
@@ -114,6 +127,7 @@ export class RunReport {
         driver: j.driver,
         skip_reason: j.skipReason,
         error_log: j.errorLog,
+        files_modified: j.filesModified,
       })),
     };
   }

@@ -1,12 +1,14 @@
+import { execFileSync } from "node:child_process";
 import {
-  existsSync,
   readFileSync,
   readdirSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join, relative } from "node:path";
+import { registerRelease } from "./lock-signals.js";
 
 const IGNORE_DIRS = new Set([
   ".git",
@@ -42,7 +44,7 @@ const IGNORE_DIRS = new Set([
   ".angular",
 ]);
 
-const IGNORE_FILES = new Set([".stitch.lock", ".DS_Store", "Thumbs.db"]);
+const IGNORE_FILES = new Set([".stitch.lock", ".stitch.lock.tmp", ".DS_Store", "Thumbs.db"]);
 
 const KEEP_HIDDEN = new Set([".gitlab-ci.yml", ".github", ".gitignore"]);
 
@@ -140,24 +142,40 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export class AbortedError extends Error {
+  constructor() {
+    super("aborted");
+    this.name = "AbortedError";
+  }
+}
+
 export async function waitForChangeThenIdle(
   repoRoot: string,
   config?: Partial<WatchConfig>,
+  signal?: AbortSignal,
 ): Promise<void> {
   const cfg = { ...DEFAULT_WATCH_CONFIG, ...config };
   const baseline = fileSnapshot(repoRoot);
   let current = baseline;
 
+  const checkAbort = () => {
+    if (signal?.aborted) throw new AbortedError();
+  };
+
   // Phase 1: wait for any change
   while (snapshotsEqual(current, baseline)) {
+    checkAbort();
     await sleep(cfg.pollInterval * 1000);
+    checkAbort();
     current = fileSnapshot(repoRoot);
   }
 
   // Phase 2: wait for quiet
   let lastChangeTs = performance.now();
   while (true) {
+    checkAbort();
     await sleep(cfg.pollInterval * 1000);
+    checkAbort();
     const newSnap = fileSnapshot(repoRoot);
     if (!snapshotsEqual(newSnap, current)) {
       current = newSnap;
@@ -170,6 +188,19 @@ export async function waitForChangeThenIdle(
   }
 }
 
+// ============================================================================
+// Self-healing Stitch watch lock
+// ============================================================================
+
+const HEARTBEAT_INTERVAL_MS = 5_000;
+const HEARTBEAT_STALE_MS = 30_000;
+const TERM_GRACE_MS = 2_000;
+const KILL_GRACE_MS = 1_000;
+const LEGACY_STALE_AGE_MS = 600_000;
+const LOCKFILE_NAME = ".stitch.lock";
+const LOCKFILE_TMP = ".stitch.lock.tmp";
+const STITCH_CMDLINE_RE = /(?:^|[\/\s])(?:node|bun)\b.*\bstitch\b|(?:^|[\/\s])stitch(?:\s|$)/;
+
 export class LockAcquireError extends Error {
   constructor(message: string) {
     super(message);
@@ -177,51 +208,35 @@ export class LockAcquireError extends Error {
   }
 }
 
-export class StitchLock {
-  private path: string;
+export interface LockfileV1 {
+  version: 1;
+  pid: number;
+  cmdline: string;
+  startedAt: number;
+  heartbeatAt: number;
+}
 
-  constructor(repoRoot: string) {
-    this.path = join(repoRoot, ".stitch.lock");
-  }
+type ParsedLockfile =
+  | { kind: "v1"; data: LockfileV1 }
+  | { kind: "legacy"; pid: number; mtime: number }
+  | { kind: "malformed" }
+  | { kind: "empty" };
 
-  acquire(): void {
-    if (existsSync(this.path)) {
-      const otherPid = this.readPid();
-      if (otherPid !== null && pidAlive(otherPid)) {
-        throw new LockAcquireError(
-          `Another Stitch instance is running (pid ${otherPid}). ` +
-            `If this is wrong, delete ${this.path} manually.`,
-        );
-      }
-      try {
-        unlinkSync(this.path);
-      } catch {
-        // ignore
-      }
-    }
-    writeFileSync(this.path, String(process.pid));
-  }
+export type PidChecker = (pid: number) => boolean;
+export type CmdlineProbe = (pid: number) => string | null;
+export type Signaler = (pid: number, signal: NodeJS.Signals | 0) => void;
 
-  release(): void {
-    try {
-      const current = this.readPid();
-      if (current === process.pid) {
-        unlinkSync(this.path);
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  private readPid(): number | null {
-    try {
-      const raw = readFileSync(this.path, "utf-8").trim();
-      const pid = Number.parseInt(raw, 10);
-      return Number.isNaN(pid) ? null : pid;
-    } catch {
-      return null;
-    }
-  }
+export interface StitchLockOptions {
+  now?: () => number;
+  pidAlive?: PidChecker;
+  probeCmdline?: CmdlineProbe;
+  signal?: Signaler;
+  heartbeatIntervalMs?: number;
+  heartbeatStaleMs?: number;
+  termGraceMs?: number;
+  killGraceMs?: number;
+  legacyStaleAgeMs?: number;
+  registerSignals?: boolean;
 }
 
 function pidAlive(pid: number): boolean {
@@ -229,8 +244,306 @@ function pidAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ESRCH") return false;
-    if ((err as NodeJS.ErrnoException).code === "EPERM") return true;
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return false;
+    // EPERM => process exists but we can't signal it. The decision layer
+    // still must verify cmdline before treating this as a live peer.
+    if (code === "EPERM") return true;
     return false;
+  }
+}
+
+function probeCmdline(pid: number): string | null {
+  try {
+    const raw = readFileSync(`/proc/${pid}/cmdline`, "utf-8");
+    const joined = raw.replace(/\0+$/, "").replace(/\0/g, " ").trim();
+    if (joined.length > 0) return joined;
+  } catch {
+    // fall through to ps
+  }
+  try {
+    const out = execFileSync("ps", ["-p", String(pid), "-o", "command="], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const trimmed = out.trim();
+    if (trimmed.length > 0) return trimmed;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function defaultSignaler(pid: number, sig: NodeJS.Signals | 0): void {
+  try {
+    process.kill(pid, sig);
+  } catch {
+    // swallow; caller interprets via pidAlive polling
+  }
+}
+
+function sleepSyncMs(ms: number): void {
+  if (ms <= 0) return;
+  const buf = new SharedArrayBuffer(4);
+  const view = new Int32Array(buf);
+  Atomics.wait(view, 0, 0, ms);
+}
+
+export function parseLockfile(path: string): ParsedLockfile {
+  const raw = readFileSync(path, "utf-8");
+  if (raw.length === 0) return { kind: "empty" };
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return { kind: "empty" };
+  // Try JSON v1 first.
+  if (trimmed.startsWith("{")) {
+    try {
+      const obj = JSON.parse(trimmed);
+      if (
+        obj &&
+        typeof obj === "object" &&
+        obj.version === 1 &&
+        typeof obj.pid === "number" &&
+        typeof obj.cmdline === "string" &&
+        typeof obj.startedAt === "number" &&
+        typeof obj.heartbeatAt === "number"
+      ) {
+        return { kind: "v1", data: obj as LockfileV1 };
+      }
+    } catch {
+      // fall through
+    }
+    return { kind: "malformed" };
+  }
+  // Legacy plain integer.
+  const n = Number.parseInt(trimmed, 10);
+  if (Number.isFinite(n) && String(n) === trimmed) {
+    let mtime = 0;
+    try {
+      mtime = statSync(path).mtimeMs;
+    } catch {
+      // best effort; treat as very old
+    }
+    return { kind: "legacy", pid: n, mtime };
+  }
+  return { kind: "malformed" };
+}
+
+interface DecideDeps {
+  now: () => number;
+  pidAlive: PidChecker;
+  probeCmdline: CmdlineProbe;
+  heartbeatStaleMs: number;
+  legacyStaleAgeMs: number;
+}
+
+export function decide(
+  parsed: ParsedLockfile,
+  deps: DecideDeps,
+): "reclaim" | "terminate" | "block" {
+  if (parsed.kind === "malformed" || parsed.kind === "empty") return "reclaim";
+
+  if (parsed.kind === "legacy") {
+    if (!deps.pidAlive(parsed.pid)) return "reclaim";
+    const cmd = deps.probeCmdline(parsed.pid);
+    if (cmd !== null && !STITCH_CMDLINE_RE.test(cmd)) return "reclaim";
+    if (deps.now() - parsed.mtime > deps.legacyStaleAgeMs) return "reclaim";
+    return "block";
+  }
+
+  // v1
+  const d = parsed.data;
+  if (!deps.pidAlive(d.pid)) return "reclaim";
+  const cmd = deps.probeCmdline(d.pid);
+  if (cmd !== null) {
+    if (!STITCH_CMDLINE_RE.test(cmd) && cmd !== d.cmdline) return "reclaim";
+  }
+  if (deps.now() - d.heartbeatAt > deps.heartbeatStaleMs) return "terminate";
+  return "block";
+}
+
+interface TerminateDeps {
+  pidAlive: PidChecker;
+  signal: Signaler;
+  termGraceMs: number;
+  killGraceMs: number;
+}
+
+function terminateHung(pid: number, deps: TerminateDeps): void {
+  deps.signal(pid, "SIGTERM");
+  let waited = 0;
+  while (waited < deps.termGraceMs) {
+    if (!deps.pidAlive(pid)) return;
+    sleepSyncMs(200);
+    waited += 200;
+  }
+  deps.signal(pid, "SIGKILL");
+  waited = 0;
+  while (waited < deps.killGraceMs) {
+    if (!deps.pidAlive(pid)) return;
+    sleepSyncMs(200);
+    waited += 200;
+  }
+  throw new LockAcquireError(buildTerminationFailedMessage(pid));
+}
+
+function buildBlockMessage(pid: number): string {
+  return `Another Stitch watch is already running (pid ${pid}).`;
+}
+
+function buildTerminationFailedMessage(pid: number): string {
+  return `Could not terminate hung Stitch (pid ${pid}) after SIGTERM+SIGKILL. Check process ownership and system state.`;
+}
+
+function safeUnlink(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    // ignore
+  }
+}
+
+export class StitchLock {
+  private readonly path: string;
+  private readonly tmpPath: string;
+  private readonly opts: Required<Omit<StitchLockOptions, "registerSignals">> & {
+    registerSignals: boolean;
+  };
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private released = false;
+  private lastState: LockfileV1 | null = null;
+  private unregisterSignals: (() => void) | null = null;
+
+  constructor(repoRoot: string, opts: StitchLockOptions = {}) {
+    this.path = join(repoRoot, LOCKFILE_NAME);
+    this.tmpPath = join(repoRoot, LOCKFILE_TMP);
+    this.opts = {
+      now: opts.now ?? Date.now,
+      pidAlive: opts.pidAlive ?? pidAlive,
+      probeCmdline: opts.probeCmdline ?? probeCmdline,
+      signal: opts.signal ?? defaultSignaler,
+      heartbeatIntervalMs: opts.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS,
+      heartbeatStaleMs: opts.heartbeatStaleMs ?? HEARTBEAT_STALE_MS,
+      termGraceMs: opts.termGraceMs ?? TERM_GRACE_MS,
+      killGraceMs: opts.killGraceMs ?? KILL_GRACE_MS,
+      legacyStaleAgeMs: opts.legacyStaleAgeMs ?? LEGACY_STALE_AGE_MS,
+      registerSignals: opts.registerSignals ?? true,
+    };
+  }
+
+  acquire(): void {
+    const maxIterations = 16;
+    for (let i = 0; i < maxIterations; i++) {
+      try {
+        this.writeFresh();
+        this.released = false;
+        this.startHeartbeat();
+        if (this.opts.registerSignals) {
+          this.unregisterSignals = registerRelease(() => this.release());
+        }
+        return;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== "EEXIST") throw err;
+      }
+
+      let parsed: ParsedLockfile;
+      try {
+        parsed = parseLockfile(this.path);
+      } catch {
+        // File vanished between EEXIST and read; loop and try to create again.
+        continue;
+      }
+
+      const decision = decide(parsed, {
+        now: this.opts.now,
+        pidAlive: this.opts.pidAlive,
+        probeCmdline: this.opts.probeCmdline,
+        heartbeatStaleMs: this.opts.heartbeatStaleMs,
+        legacyStaleAgeMs: this.opts.legacyStaleAgeMs,
+      });
+
+      if (decision === "reclaim") {
+        safeUnlink(this.path);
+        continue;
+      }
+      if (decision === "terminate") {
+        const holderPid = parsed.kind === "v1" ? parsed.data.pid : 0;
+        terminateHung(holderPid, {
+          pidAlive: this.opts.pidAlive,
+          signal: this.opts.signal,
+          termGraceMs: this.opts.termGraceMs,
+          killGraceMs: this.opts.killGraceMs,
+        });
+        safeUnlink(this.path);
+        continue;
+      }
+      // block
+      const holderPid =
+        parsed.kind === "v1" ? parsed.data.pid : parsed.kind === "legacy" ? parsed.pid : 0;
+      throw new LockAcquireError(buildBlockMessage(holderPid));
+    }
+    throw new LockAcquireError("Stitch could not acquire the watch lock after repeated attempts.");
+  }
+
+  release(): void {
+    if (this.released) return;
+    this.released = true;
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    try {
+      const parsed = parseLockfile(this.path);
+      if (parsed.kind === "v1" && parsed.data.pid === process.pid) {
+        safeUnlink(this.path);
+      } else if (parsed.kind === "legacy" && parsed.pid === process.pid) {
+        safeUnlink(this.path);
+      }
+    } catch {
+      // file gone or unreadable; nothing to do
+    }
+    if (this.unregisterSignals) {
+      try {
+        this.unregisterSignals();
+      } catch {
+        // ignore
+      }
+      this.unregisterSignals = null;
+    }
+  }
+
+  private writeFresh(): void {
+    const cmdline = this.opts.probeCmdline(process.pid) ?? process.argv.join(" ");
+    const now = this.opts.now();
+    const body: LockfileV1 = {
+      version: 1,
+      pid: process.pid,
+      cmdline,
+      startedAt: now,
+      heartbeatAt: now,
+    };
+    writeFileSync(this.path, JSON.stringify(body), { flag: "wx" });
+    this.lastState = body;
+  }
+
+  private startHeartbeat(): void {
+    const tick = () => {
+      if (this.released || !this.lastState) return;
+      const body: LockfileV1 = {
+        ...this.lastState,
+        heartbeatAt: this.opts.now(),
+      };
+      try {
+        writeFileSync(this.tmpPath, JSON.stringify(body));
+        renameSync(this.tmpPath, this.path);
+        this.lastState = body;
+      } catch {
+        // next tick retries
+      }
+    };
+    this.heartbeatTimer = setInterval(tick, this.opts.heartbeatIntervalMs);
+    if (typeof this.heartbeatTimer.unref === "function") {
+      this.heartbeatTimer.unref();
+    }
   }
 }

@@ -6,10 +6,11 @@ import { ConfigError, type StitchConfig, loadConfig } from "../core/config.js";
 import { applyFilter, classifyWithLLM, loadCache, saveCache } from "../core/filter.js";
 import { commit, push, snapshot } from "../core/git.js";
 import { recordRun } from "../core/history.js";
-import type { CIJob, GitSnapshot } from "../core/models.js";
+import type { CIJob, CommitPushReason, GitSnapshot } from "../core/models.js";
 import { type RunReport, isCommittable, isPushable } from "../core/models.js";
 import { Runner, type RunnerConfig } from "../core/runner.js";
 import {
+  AbortedError,
   LockAcquireError,
   StitchLock,
   type WatchConfig,
@@ -76,6 +77,7 @@ function buildDriver(agent: string): AgentDriver | null {
 interface CommitPushResult {
   sha: string | null;
   pushed: boolean;
+  reason: CommitPushReason;
 }
 
 function autoCommitPush(
@@ -84,20 +86,20 @@ function autoCommitPush(
   report: RunReport,
   noPush: boolean,
 ): CommitPushResult {
-  if (!isCommittable(snap) || report.overallStatus !== "passed" || report.fixedJobs.length === 0) {
-    return { sha: null, pushed: false };
-  }
+  if (!isCommittable(snap)) return { sha: null, pushed: false, reason: "dirty_pre_run" };
+  if (report.overallStatus !== "passed") return { sha: null, pushed: false, reason: "run_failed" };
+  if (report.fixedJobs.length === 0) return { sha: null, pushed: false, reason: "no_fixed_jobs" };
 
   const cr = commit(repoRoot, report.fixedJobs);
-  if (!cr.ok) return { sha: null, pushed: false };
+  if (!cr.ok) return { sha: null, pushed: false, reason: cr.reason as CommitPushReason };
 
-  let pushed = false;
-  if (!noPush && isPushable(snap)) {
-    const pr = push(repoRoot);
-    pushed = pr.ok;
+  if (noPush || !isPushable(snap)) {
+    return { sha: cr.sha, pushed: false, reason: "ok" };
   }
 
-  return { sha: cr.sha, pushed };
+  const pr = push(repoRoot);
+  if (!pr.ok) return { sha: cr.sha, pushed: false, reason: "push_failed" };
+  return { sha: cr.sha, pushed: true, reason: "ok" };
 }
 
 async function parseJobs(repoRoot: string): Promise<CIJob[] | 2> {
@@ -134,12 +136,14 @@ async function runHeadless(
   opts: ResolvedOptions,
   repoRoot: string,
   driver: AgentDriver,
+  uncommitted: boolean,
 ): Promise<number> {
   const jobsOrCode = await parseJobs(repoRoot);
   if (jobsOrCode === 2) return 2;
   const allJobs = jobsOrCode;
 
   if (allJobs.length === 0) {
+    if (uncommitted) printUncommittedNotice();
     const msg =
       "No CI configuration found (.gitlab-ci.yml, .github/workflows/, or bitbucket-pipelines.yml)";
     if (opts.output === "json") {
@@ -150,7 +154,6 @@ async function runHeadless(
     return 0;
   }
 
-  let classifications: Record<string, string> | null = null;
   const filterCfg = {
     only: opts.jobs
       ? opts.jobs
@@ -161,10 +164,16 @@ async function runHeadless(
     exclude: opts.excludeJobs,
   };
 
+  if (opts.watch) {
+    return runWatchMode(repoRoot, driver, allJobs, filterCfg, opts, uncommitted);
+  }
+
+  // dry-run / json paths: classify inline (non-TUI), warn on stderr
+  if (uncommitted) printUncommittedNotice();
+  let classifications: Record<string, string> | null = null;
   if (!filterCfg.only && opts.classification === "llm") {
     classifications = await classifyJobs(allJobs, opts, repoRoot);
   }
-
   const jobs = applyFilter(allJobs, filterCfg, classifications);
 
   if (opts.dryRun) {
@@ -187,11 +196,40 @@ async function runHeadless(
     return report.exitCode();
   }
 
-  if (opts.watch) {
-    return runWatchMode(repoRoot, driver, jobs, opts);
-  }
-
   return 0;
+}
+
+function printUncommittedNotice(): void {
+  console.error(
+    "stitch: uncommitted changes present in working tree; auto-commit will be skipped for this run",
+  );
+}
+
+interface UINotice {
+  setNotice(msg: string): void;
+  setLoading(msg: string, step?: number): void;
+}
+
+function setUncommittedUiNotice(ui: UINotice, uncommitted: boolean): void {
+  if (uncommitted) ui.setNotice("Uncommitted changes; auto-commit will be skipped this run.");
+}
+
+async function classifyOnUI(
+  ui: UINotice,
+  allJobs: CIJob[],
+  filterCfg: { only: string[] | null; exclude: string[] | null },
+  opts: ResolvedOptions,
+  repoRoot: string,
+): Promise<Record<string, string> | null> {
+  if (filterCfg.only || opts.classification !== "llm") return null;
+  const jobNames = allJobs.map((j) => j.name);
+  ui.setLoading("Loading job cache...", 2);
+  let classifications = loadCache(repoRoot, jobNames);
+  if (classifications) return classifications;
+  ui.setLoading(`Classifying ${jobNames.length} jobs with ${opts.agent}...`, 2);
+  classifications = await classifyWithLLM(jobNames, opts.agent, repoRoot);
+  if (classifications) saveCache(repoRoot, jobNames, classifications);
+  return classifications;
 }
 
 function printDryRun(jobs: CIJob[]): void {
@@ -228,15 +266,15 @@ async function runTuiMode(
   repoRoot: string,
   driver: AgentDriver,
   allJobs: CIJob[],
+  uncommitted: boolean,
 ): Promise<number> {
   // ── TUI mode: jobs found, launch UI ──────────────────────
   // Lazy import: @opentui/core uses bun:ffi, only load when TUI is needed
   const { StitchUI } = await import("../core/ui/run-ui.js");
   const ui = new StitchUI(opts.agent, repoRoot);
   await ui.start();
+  setUncommittedUiNotice(ui, uncommitted);
 
-  // Step 2: Classify
-  let classifications: Record<string, string> | null = null;
   const filterCfg = {
     only: opts.jobs
       ? opts.jobs
@@ -247,19 +285,7 @@ async function runTuiMode(
     exclude: opts.excludeJobs,
   };
 
-  if (!filterCfg.only && opts.classification === "llm") {
-    const jobNames = allJobs.map((j) => j.name);
-    ui.setLoading("Loading job cache...", 2);
-    classifications = loadCache(repoRoot, jobNames);
-    if (!classifications) {
-      ui.setLoading(`Classifying ${jobNames.length} jobs with ${opts.agent}...`, 2);
-      classifications = await classifyWithLLM(jobNames, opts.agent, repoRoot);
-      if (classifications) {
-        saveCache(repoRoot, jobNames, classifications);
-      }
-    }
-  }
-
+  const classifications = await classifyOnUI(ui, allJobs, filterCfg, opts, repoRoot);
   let jobs = applyFilter(allJobs, filterCfg, classifications);
 
   // Ensure welcome screen is visible for at least 2 seconds total
@@ -282,9 +308,9 @@ async function runTuiMode(
     ui.initJobs(jobs);
     const runner = new Runner(repoRoot, driver, config, undefined, ui.callback);
     const report = await runner.run(jobs);
-    const { sha, pushed } = autoCommitPush(repoRoot, currentSnap, report, noPush);
+    const { sha, pushed, reason } = autoCommitPush(repoRoot, currentSnap, report, noPush);
     recordRun(report, { repoRoot, agent: opts.agent, snap: currentSnap, commitSha: sha });
-    ui.markDone(report, sha, pushed);
+    ui.markDone(report, sha, pushed, reason);
     lastExitCode = report.exitCode();
   };
 
@@ -323,6 +349,12 @@ export async function runRunCommand(rawOpts: RunOptions): Promise<number> {
     return 2;
   }
 
+  let uncommitted = false;
+  if (!rawOpts.dryRun && rawOpts.output !== "json") {
+    const preSnap = snapshot(repoRoot);
+    uncommitted = preSnap.branch !== null && !preSnap.clean;
+  }
+
   const fileConfigOrCode = loadConfigSafe(repoRoot);
   if (fileConfigOrCode === 2) return 2;
   const fileConfig = fileConfigOrCode;
@@ -344,7 +376,7 @@ export async function runRunCommand(rawOpts: RunOptions): Promise<number> {
 
   // For non-TUI modes (dry-run, json, watch), parse inline
   if (opts.dryRun || opts.output === "json" || opts.watch) {
-    return runHeadless(opts, repoRoot, driver);
+    return runHeadless(opts, repoRoot, driver, uncommitted);
   }
 
   // ── Pre-TUI checks (before loading OpenTUI) ──────────────
@@ -353,27 +385,24 @@ export async function runRunCommand(rawOpts: RunOptions): Promise<number> {
   const allJobs = allJobsOrCode;
 
   if (allJobs.length === 0) {
+    if (uncommitted) printUncommittedNotice();
     console.log(
       "No CI configuration found (.gitlab-ci.yml, .github/workflows/, or bitbucket-pipelines.yml)",
     );
     return 0;
   }
 
-  return runTuiMode(opts, repoRoot, driver, allJobs);
+  return runTuiMode(opts, repoRoot, driver, allJobs, uncommitted);
 }
 
 async function runWatchMode(
   repoRoot: string,
   driver: AgentDriver,
-  jobs: CIJob[],
+  allJobs: CIJob[],
+  filterCfg: { only: string[] | null; exclude: string[] | null },
   opts: ResolvedOptions,
+  uncommitted: boolean,
 ): Promise<number> {
-  const runnable = jobs.filter((j) => !j.skipReason);
-  if (runnable.length === 0) {
-    console.error("Stitch watch: nothing to run -- all jobs are skipped");
-    return 0;
-  }
-
   const config: Partial<RunnerConfig> = { maxAttempts: opts.maxAttempts, failFast: opts.failFast };
   const { StitchUI } = await import("../core/ui/run-ui.js");
   const ui = new StitchUI(opts.agent, repoRoot);
@@ -391,25 +420,58 @@ async function runWatchMode(
   }
 
   await ui.start();
+  setUncommittedUiNotice(ui, uncommitted);
+
+  const classifications = await classifyOnUI(ui, allJobs, filterCfg, opts, repoRoot);
+  const jobs = applyFilter(allJobs, filterCfg, classifications);
+  const runnable = jobs.filter((j) => !j.skipReason);
+  if (runnable.length === 0) {
+    ui.stop();
+    lock.release();
+    console.error("Stitch watch: nothing to run -- all jobs are skipped");
+    return 0;
+  }
+  ui.setLoading("Ready.", 3);
 
   try {
     const runOnce = async () => {
+      const preSnap = snapshot(repoRoot);
       ui.initJobs(jobs);
-      const runner = new Runner(repoRoot, driver, config, undefined, ui.callback);
-      const report = await runner.run(jobs);
-      const watchSnap = snapshot(repoRoot);
-      recordRun(report, { repoRoot, agent: opts.agent, snap: watchSnap, commitSha: null });
-      ui.markDone(report, null, false);
+      const runController = new AbortController();
+      ui.setOnAbort(() => runController.abort());
+      try {
+        const runner = new Runner(repoRoot, driver, config, undefined, ui.callback);
+        const report = await runner.run(jobs, false, runController.signal);
+        const { sha, pushed, reason } = autoCommitPush(repoRoot, preSnap, report, !opts.push);
+        recordRun(report, { repoRoot, agent: opts.agent, snap: preSnap, commitSha: sha });
+        ui.markDone(report, sha, pushed, reason);
+      } finally {
+        ui.setOnAbort(null);
+      }
     };
 
     await runOnce();
 
     while (true) {
+      const abort = new AbortController();
+      const fsPromise = waitForChangeThenIdle(repoRoot, watchCfg, abort.signal)
+        .then(() => "fs" as const)
+        .catch((err) => {
+          if (err instanceof AbortedError) return "aborted" as const;
+          throw err;
+        });
+      const keyPromise = ui.waitForRerun(abort.signal);
+
+      let trigger: "fs" | "rerun" | "quit" | "aborted";
       try {
-        await waitForChangeThenIdle(repoRoot, watchCfg);
+        trigger = await Promise.race([fsPromise, keyPromise]);
       } catch {
+        abort.abort();
         break;
       }
+
+      abort.abort();
+      if (trigger === "quit") break;
       await runOnce();
     }
   } catch {

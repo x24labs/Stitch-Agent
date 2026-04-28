@@ -43,24 +43,23 @@ export function snapshot(repoRoot: string): GitSnapshot {
 }
 
 export function commit(repoRoot: string, fixedJobs: string[]): CommitResult {
-  run(["add", "-u"], repoRoot);
+  run(["add", "-A"], repoRoot);
 
-  // Check if anything staged
   const diffCheck = run(["diff", "--cached", "--quiet"], repoRoot);
   if (diffCheck.returncode === 0) {
-    return { ok: false, sha: "", message: "no changes to commit" };
+    return { ok: false, sha: "", message: "no changes to commit", reason: "nothing_staged" };
   }
 
   const message = `fix(stitch): ${fixedJobs.join(", ")}`;
   const result = run(["commit", "-m", message], repoRoot);
   if (result.returncode !== 0) {
-    return { ok: false, sha: "", message: result.stderr.trim() };
+    return { ok: false, sha: "", message: result.stderr.trim(), reason: "commit_failed" };
   }
 
   const shaResult = run(["rev-parse", "HEAD"], repoRoot);
   const sha = shaResult.returncode === 0 ? shaResult.stdout.trim() : "";
 
-  return { ok: true, sha, message };
+  return { ok: true, sha, message, reason: "ok" };
 }
 
 export function push(repoRoot: string): PushResult {

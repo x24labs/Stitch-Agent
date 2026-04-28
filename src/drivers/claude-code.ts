@@ -15,9 +15,12 @@ export class ClaudeCodeDriver implements AgentDriver {
     this.timeoutSeconds = timeoutSeconds;
   }
 
-  async fix(context: FixContext): Promise<FixOutcome> {
+  async fix(context: FixContext, signal?: AbortSignal): Promise<FixOutcome> {
     if (!which(this.binary)) {
       return { applied: false, reason: `${this.binary} CLI not found in PATH`, driverLog: "" };
+    }
+    if (signal?.aborted) {
+      return { applied: false, reason: `${this.binary} aborted before start`, driverLog: "" };
     }
 
     const prompt = buildPrompt(context);
@@ -40,9 +43,28 @@ export class ClaudeCodeDriver implements AgentDriver {
       let resultText = "";
       let done = false;
 
+      const onAbort = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+        resolve({
+          applied: false,
+          reason: `${this.binary} aborted`,
+          driverLog: activity.join("\n").slice(-2000),
+        });
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+
       const timer = setTimeout(() => {
         if (!done) {
           done = true;
+          signal?.removeEventListener("abort", onAbort);
           try {
             proc.kill("SIGKILL");
           } catch {
@@ -70,6 +92,7 @@ export class ClaudeCodeDriver implements AgentDriver {
         if (done) return;
         done = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         const log = activity.join("\n");
 
         if (code !== 0) {
@@ -92,6 +115,7 @@ export class ClaudeCodeDriver implements AgentDriver {
         if (done) return;
         done = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         resolve({
           applied: false,
           reason: `failed to spawn ${this.binary}: ${err}`,
@@ -108,7 +132,7 @@ export class ClaudeCodeDriver implements AgentDriver {
   }
 }
 
-export interface ParsedEvent {
+interface ParsedEvent {
   kind: "text" | "tool_use" | "tool_result" | "result";
   content: string;
 }

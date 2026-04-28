@@ -46,6 +46,7 @@ function notRunResult(name: string): JobResult {
     driver: null,
     errorLog: "",
     skipReason: null,
+    filesModified: false,
   };
 }
 
@@ -55,6 +56,7 @@ export class Runner {
   private config: RunnerConfig;
   private executor: JobExecutor;
   private cb: RunnerCallback;
+  private appliedJobs: Set<string> = new Set();
 
   constructor(
     repoRoot: string,
@@ -70,88 +72,127 @@ export class Runner {
     this.cb = callback ?? new NullCallback();
   }
 
-  async run(jobs: CIJob[], dryRun = false): Promise<RunReport> {
+  async run(jobs: CIJob[], dryRun = false, signal?: AbortSignal): Promise<RunReport> {
     const results = new Map<string, JobResult>();
+    this.appliedJobs = new Set<string>();
     const runnable = this.partitionJobs(jobs, dryRun, results);
 
-    if (runnable.length === 0) {
-      return new RunReport(
-        jobs.map((j) => results.get(j.name) ?? notRunResult(j.name)),
-        this.driver.name,
-      );
+    if (runnable.length !== 0) {
+      await this.runAttempts(runnable, results, signal);
     }
 
-    let pending = [...runnable];
+    const ordered = jobs.map((j) => results.get(j.name) ?? notRunResult(j.name));
+    return new RunReport(ordered, this.driver.name);
+  }
 
+  private async runAttempts(
+    runnable: CIJob[],
+    results: Map<string, JobResult>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    let pending = [...runnable];
     for (let attempt = 1; attempt <= this.config.maxAttempts; attempt++) {
-      // On the final attempt, disable fail-fast so we get a complete picture
-      // before escalating. Cancelled jobs cannot escalate because we never
-      // learned whether they would have passed or failed.
+      if (signal?.aborted) {
+        this.markAborted(pending, attempt, results);
+        return;
+      }
+
       const useFailFast = this.config.failFast && attempt < this.config.maxAttempts;
-      const execResults = await this.runJobsParallel(pending, attempt, useFailFast);
+      const execResults = await this.runJobsParallel(pending, attempt, useFailFast, signal);
+      if (signal?.aborted) {
+        this.markAborted(pending, attempt, results);
+        return;
+      }
 
       const { failed, cancelled } = this.classifyResults(pending, execResults, attempt, results);
-
-      if (failed.length === 0 && cancelled.length === 0) break;
+      if (failed.length === 0 && cancelled.length === 0) return;
       if (failed.length === 0) {
-        // Only cancelled jobs remain (shouldn't happen past attempt 1 because
-        // we disable fail-fast on the final attempt, but be defensive).
         pending = cancelled;
         continue;
       }
 
       if (attempt >= this.config.maxAttempts) {
         this.escalateJobs(failed, attempt, results);
-        break;
+        return;
       }
 
-      // Batch fix
-      const contexts: FixContext[] = failed.map(([job, log]) => ({
-        repoRoot: this.repoRoot,
-        jobName: job.name,
-        command: job.script.join(" && "),
-        script: [...job.script],
-        errorLog: log,
-        attempt,
-        promptOverride: null,
-      }));
-
-      const batchContext = this.makeBatchContext(contexts);
-      const batchLabel = failed.map(([j]) => j.name).join(", ");
-
-      this.cb.driverStarted(batchLabel, this.driver.name);
-
-      this.driver.onOutput = (log: string) => {
-        this.cb.driverLogUpdate(batchLabel, log);
-      };
-
-      const outcome = await this.driver.fix(batchContext);
-      this.driver.onOutput = null;
-
-      if (!outcome.applied) {
-        this.escalateJobs(failed, attempt, results, outcome.reason);
-        break;
-      }
-
-      // Next round: failed jobs + any that got cancelled by fail-fast
-      pending = [...failed.map(([job]) => job), ...cancelled];
+      const nextPending = await this.runFixStep(failed, cancelled, attempt, results, signal);
+      if (nextPending === null) return;
+      pending = nextPending;
     }
+  }
 
-    // Preserve original order
-    const ordered = jobs.map((j) => results.get(j.name) ?? notRunResult(j.name));
-    return new RunReport(ordered, this.driver.name);
+  private async runFixStep(
+    failed: [CIJob, string][],
+    cancelled: CIJob[],
+    attempt: number,
+    results: Map<string, JobResult>,
+    signal?: AbortSignal,
+  ): Promise<CIJob[] | null> {
+    const contexts: FixContext[] = failed.map(([job, log]) => ({
+      repoRoot: this.repoRoot,
+      jobName: job.name,
+      command: job.script.join(" && "),
+      script: [...job.script],
+      errorLog: log,
+      attempt,
+      promptOverride: null,
+    }));
+
+    const batchContext = this.makeBatchContext(contexts);
+    const batchLabel = failed.map(([j]) => j.name).join(", ");
+
+    this.cb.driverStarted(batchLabel, this.driver.name);
+    this.driver.onOutput = (log: string) => this.cb.driverLogUpdate(batchLabel, log);
+    const outcome = await this.driver.fix(batchContext, signal);
+    this.driver.onOutput = null;
+
+    if (signal?.aborted) {
+      this.markAborted([...failed.map(([job]) => job), ...cancelled], attempt, results);
+      return null;
+    }
+    if (!outcome.applied) {
+      this.escalateJobs(failed, attempt, results, outcome.reason);
+      return null;
+    }
+    for (const [job] of failed) this.appliedJobs.add(job.name);
+    return [...failed.map(([job]) => job), ...cancelled];
+  }
+
+  private markAborted(jobs: CIJob[], attempt: number, results: Map<string, JobResult>): void {
+    for (const job of jobs) {
+      if (results.has(job.name)) continue;
+      const result: JobResult = {
+        name: job.name,
+        status: "not_run",
+        attempts: attempt,
+        driver: null,
+        errorLog: "",
+        skipReason: "aborted",
+        filesModified: this.appliedJobs.has(job.name),
+      };
+      results.set(job.name, result);
+      this.cb.jobFinished(job.name, result);
+    }
   }
 
   private async runJobsParallel(
     jobs: CIJob[],
     attempt: number,
     failFast: boolean,
+    external?: AbortSignal,
   ): Promise<Map<string, ExecResult>> {
     for (const job of jobs) {
       this.cb.jobStarted(job.name, attempt, this.config.maxAttempts);
     }
 
-    const controller = failFast ? new AbortController() : undefined;
+    const controller = failFast || external ? new AbortController() : undefined;
+    const onExternalAbort = () => controller?.abort();
+    if (external && controller) {
+      if (external.aborted) controller.abort();
+      else external.addEventListener("abort", onExternalAbort, { once: true });
+    }
+
     const pairs = await Promise.all(
       jobs.map(async (job): Promise<[string, ExecResult]> => {
         const result = await this.executor.runJob(job, controller?.signal);
@@ -164,6 +205,8 @@ export class Runner {
         return [job.name, result];
       }),
     );
+
+    external?.removeEventListener("abort", onExternalAbort);
 
     return new Map(pairs);
   }
@@ -191,6 +234,7 @@ export class Runner {
           driver: null,
           errorLog: "",
           skipReason: null,
+          filesModified: this.appliedJobs.has(job.name),
         };
         results.set(job.name, result);
         this.cb.jobFinished(job.name, result);
@@ -216,6 +260,7 @@ export class Runner {
         driver: this.driver.name,
         errorLog: `${prefix}${log.slice(-ERROR_LOG_TAIL_CHARS)}`,
         skipReason: null,
+        filesModified: this.appliedJobs.has(job.name),
       };
       results.set(job.name, result);
       this.cb.jobFinished(job.name, result);
@@ -233,6 +278,7 @@ export class Runner {
           driver: null,
           errorLog: "",
           skipReason: job.skipReason,
+          filesModified: false,
         });
       } else if (dryRun) {
         results.set(job.name, notRunResult(job.name));

@@ -1,5 +1,92 @@
 # Changelog
 
+## v2.0.1, unreleased
+
+### Added
+
+- Watch mode: press `Enter` (or `r`) between runs to re-run immediately without waiting for a file change. `q` exits. Keybinding hint was already rendered in the footer; the race is now wired in `runWatchMode`.
+- Watch mode: `Ctrl+C` during an in-flight run now aborts the current run and returns to watch idle, instead of killing the whole process. Running jobs are SIGKILLed, the active agent CLI child is killed, remaining jobs are marked `not_run` with reason `aborted`. Press `q` to exit fully.
+
+### Changed
+
+- `Runner.run(jobs, dryRun?, signal?)` now accepts an optional `AbortSignal` for cooperative cancellation. `AgentDriver.fix(context, signal?)` likewise. Existing callers that do not pass a signal are unaffected.
+
+### Fixed
+
+- Watch mode: `.stitch.lock` self-heals when a previous Stitch run crashed, was `SIGKILL`ed, or left a stale lockfile after a PID got recycled. The new lockfile stores a small JSON record with a 5-second heartbeat; on the next start, Stitch automatically reclaims the lock when the pid is dead, the pid was recycled to an unrelated process, or the heartbeat is older than 30 seconds (after a bounded `SIGTERM` + `SIGKILL` escalation). The old "delete `.stitch.lock` manually" instruction is gone. Real double-runs are still blocked.
+- Watch mode no longer leaks background polling promises when a re-run is triggered. `waitForChangeThenIdle` accepts an `AbortSignal`; `ui.waitForRerun` does too.
+- Watch mode now runs the full auto-commit/push path after every successful iteration, matching `stitch run` behavior. Previously it silently skipped commit and push.
+- `git commit` now stages with `git add -A` so new files created by the agent (new tests, new modules) are included. Previously `git add -u` dropped them silently.
+- `autoCommitPush` returns a structured `reason` so the UI can explain why a commit or push did not happen (`dirty_pre_run`, `run_failed`, `no_fixed_jobs`, `nothing_staged`, `commit_failed`, `push_failed`).
+- When Stitch starts with uncommitted changes in the working tree, it prints a one-line warning on stderr and skips auto-commit for the run instead of silently bailing.
+- `RunReport.fixedJobs` is now derived from `filesModified` (set from the driver's `FixOutcome.applied`) instead of `attempts > 1`, so jobs the agent edited still trigger a commit even if they passed on the first re-run.
+
+## v2.0.0, 2026-04-16
+
+Full rewrite from Python to TypeScript. Distributed via npm, zero runtime dependency on Python.
+
+### Changed (breaking)
+
+- Package renamed from PyPI `stitch-agent` (Python) to npm `stitch-agent` (TypeScript). Install via `npm i -g stitch-agent` or `bunx stitch-agent`.
+- Entry binary now runs on Node 20+ / Bun 1.0+. Python 3.12 requirement removed.
+- CLI surface preserved: `stitch run`, `stitch generate`, `stitch doctor`, `stitch history`.
+
+### Added
+
+- `stitch doctor` diagnostic command (runtime, CI config, agent CLI, permissions).
+- `stitch history` with streak-compacted fix history.
+- `.stitch.yml` configuration file (agent, maxAttempts, failFast, jobs, push, watch, debounce).
+- `--fail-fast` flag cancels in-flight jobs on first failure before the fix loop.
+- Bitbucket Pipelines support alongside GitLab CI and GitHub Actions.
+- OpenTUI renderer replaces the raw ANSI TUI for flicker-free output.
+- Auto-commit and auto-push after a successful fix loop (disabled via `--no-push`).
+- Global error handler in the CLI: unhandled errors print `stitch: <msg>` instead of raw Node stack traces. `STITCH_DEBUG=1` re-enables stacks.
+- Automated npm publish from `release/*` branches via GitLab CI (issue #34).
+
+### Removed
+
+- Python codebase (`stitch_agent/`, `runners/`, `pyproject.toml`). Full history remains in git.
+- `@orchetron/storm` + React TUI runtime (8MB+1.5MB+260KB), replaced by OpenTUI.
+
+## v1.1.0, 2026-04-12
+
+### Added
+
+- LLM-based job classification replaces hardcoded pattern matching. Infra jobs (deploy, publish, docker push) are skipped by default; verify jobs (lint, test, build) run. Cached in `.stitch/jobs.json` keyed by job-name hash.
+- Auto-detect CI platform (GitLab, GitHub) so `--jobs` is no longer required.
+- `stitch generate <agent>` command: LLM analyzes the repo and proposes CI test/lint jobs.
+
+### Fixed
+
+- Product name capitalization ("Stitch") standardized across all user-facing messages.
+
+## v1.0.0, 2026-04-10
+
+First stable release. Pivot to skill-first local CI runner.
+
+### Changed (breaking)
+
+- Project repositioned from CI-hosted webhook service to local-first CLI. Runs your CI jobs on the developer machine and delegates fixes to a local agent CLI (Claude Code or Codex).
+- Zero-config mode: `.stitch.yml` no longer required for normal use.
+- Anthropic API driver removed. Agent CLI (claude, codex) is now the only fix backend; no API keys handled by Stitch.
+
+### Added
+
+- Rich TUI for `stitch run` (progress bar, per-job status, footer).
+- `--permission-mode acceptEdits` passed to the Claude Code CLI so fixes apply without prompts.
+
+### Removed
+
+- OpenAI API driver (`stitch_agent/drivers/api.py`), `openai` dependency.
+- Webhook server, orchestrator examples, Docker sandbox validation mode (already removed in v0.1.5, cleanup finalized).
+- `pydantic` and `httpx` dependencies (zero-config refactor).
+
+---
+
+## Pre-v1.0.0 (Python era)
+
+Entries below describe the pre-v1 Python/webhook implementation. Kept for historical reference. Not applicable to the current TypeScript codebase.
+
 ## v0.2.1 — 2026-03-24
 
 ### Removed

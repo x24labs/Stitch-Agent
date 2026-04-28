@@ -40,8 +40,25 @@ export class StubDriver implements AgentDriver {
   outcomes: FixOutcome[] = [];
   calls: FixContext[] = [];
 
-  async fix(context: FixContext): Promise<FixOutcome> {
+  fixDelayMs = 0;
+
+  async fix(context: FixContext, signal?: AbortSignal): Promise<FixOutcome> {
     this.calls.push(context);
+    if (this.fixDelayMs > 0) {
+      const cancelled = await new Promise<boolean>((resolve) => {
+        if (signal?.aborted) return resolve(true);
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(false);
+        }, this.fixDelayMs);
+        const onAbort = () => {
+          clearTimeout(timer);
+          resolve(true);
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
+      if (cancelled) return { applied: false, reason: "stub aborted", driverLog: "" };
+    }
     return this.outcomes.shift() ?? { applied: true, reason: "stub fix applied", driverLog: "" };
   }
 }

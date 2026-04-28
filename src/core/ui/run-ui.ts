@@ -11,7 +11,7 @@ import {
   fg,
   t,
 } from "@opentui/core";
-import type { CIJob, JobResult, RunReport } from "../models.js";
+import type { CIJob, CommitPushReason, JobResult, RunReport } from "../models.js";
 import type { RunnerCallback } from "../runner.js";
 import { createRenderer } from "./renderer.js";
 
@@ -98,6 +98,7 @@ interface AppState {
     elapsed: number;
     commitSha: string | null;
     pushed: boolean;
+    reason?: CommitPushReason;
   } | null;
 }
 
@@ -106,9 +107,11 @@ const PIPELINE_STEPS = ["Detect", "Parse", "Classify", "Execute", "Fix", "Commit
 class TuiState {
   state: AppState;
   loadingMsg = "Detecting CI configuration...";
+  notice = "";
   pipelineStep = 0;
   onRerun: (() => void) | null = null;
   onQuit: (() => void) | null = null;
+  onAbort: (() => void) | null = null;
 
   constructor() {
     this.state = {
@@ -186,7 +189,12 @@ class TuiState {
     }
   }
 
-  markDone(report: RunReport, commitSha: string | null, pushed: boolean) {
+  markDone(
+    report: RunReport,
+    commitSha: string | null,
+    pushed: boolean,
+    reason?: CommitPushReason,
+  ) {
     if (commitSha) this.pipelineStep = 5;
     const passed = report.jobs.filter((j) => j.status === "passed").length;
     const failed = report.jobs.filter(
@@ -199,7 +207,7 @@ class TuiState {
       phase: "done",
       fixing: null,
       runCount: this.state.runCount + 1,
-      lastReport: { passed, failed, fixed: report.fixedJobs, elapsed, commitSha, pushed },
+      lastReport: { passed, failed, fixed: report.fixedJobs, elapsed, commitSha, pushed, reason },
     };
   }
 }
@@ -327,6 +335,7 @@ interface ViewTree {
   welcomeStats: TextRenderable;
   welcomePipeline: TextRenderable;
   welcomeLoading: TextRenderable;
+  welcomeNotice: TextRenderable;
   // Running/Done phase
   runBox: BoxRenderable;
   runLogo: ASCIIFontRenderable;
@@ -371,7 +380,7 @@ async function buildViewTree(agent: string, repo: string): Promise<ViewTree> {
 
   const welcomeStats = new TextRenderable(renderer, {
     id: "welcome-stats",
-    content: t`${fg(cBlue)(bold("Agent"))} ${dim(agent)}   ${fg(cCyan)("\u00b7")}   ${fg(cCyan)(bold("Repo"))} ${dim(repo)}   ${fg(cCyan)("\u00b7")}   ${fg(cPurple)(bold("v2.0.0"))}`,
+    content: t`${fg(cBlue)(bold("Agent"))} ${dim(agent)}   ${fg(cCyan)("\u00b7")}   ${fg(cCyan)(bold("Repo"))} ${dim(repo)}   ${fg(cCyan)("\u00b7")}   ${fg(cPurple)(bold("v2.0.1"))}`,
     alignSelf: "center",
     marginTop: 1,
   });
@@ -393,6 +402,14 @@ async function buildViewTree(agent: string, repo: string): Promise<ViewTree> {
     live: true,
   });
   welcomeBox.add(welcomeLoading);
+
+  const welcomeNotice = new TextRenderable(renderer, {
+    id: "welcome-notice",
+    content: "",
+    alignSelf: "center",
+    marginTop: 1,
+  });
+  welcomeBox.add(welcomeNotice);
 
   // ── Run screen ────────────────────────────────────────────────────────
   const runBox = new BoxRenderable(renderer, {
@@ -480,6 +497,7 @@ async function buildViewTree(agent: string, repo: string): Promise<ViewTree> {
     welcomeStats,
     welcomePipeline,
     welcomeLoading,
+    welcomeNotice,
     runBox,
     runLogo,
     runInfo,
@@ -498,6 +516,9 @@ async function buildViewTree(agent: string, repo: string): Promise<ViewTree> {
 function updateWelcome(view: ViewTree, tuiState: TuiState, spinner: Spinner): void {
   view.welcomePipeline.content = buildPipelineText(tuiState.pipelineStep);
   view.welcomeLoading.content = t`${fg(cCyan)(spinner.frame)}  ${dim(tuiState.loadingMsg)}`;
+  view.welcomeNotice.content = tuiState.notice
+    ? t`${fg(cOrange)("⚠")}  ${fg(cOrange)(tuiState.notice)}`
+    : "";
 }
 
 function updateRunView(
@@ -659,19 +680,51 @@ function updateErrorPanel(view: ViewTree, state: AppState, isDone: boolean): voi
 }
 
 function updateCommitPanel(view: ViewTree, state: AppState, isDone: boolean): void {
-  if (!isDone || !state.lastReport?.commitSha) {
+  if (!isDone || !state.lastReport) {
     view.runCommit.visible = false;
     return;
   }
-  const commitChunks = [
-    fg(cGreen)("*"),
-    dim(" committed "),
-    fg(cOrange)(bold(state.lastReport.commitSha.slice(0, 8))),
-    dim(` fix(stitch): ${state.lastReport.fixed.join(", ")}`),
-  ];
-  if (state.lastReport.pushed) commitChunks.push(fg(cGreen)(" pushed"));
-  view.runCommit.content = new StyledText(commitChunks);
+  const report = state.lastReport;
+  if (report.commitSha) {
+    const commitChunks = [
+      fg(cGreen)("*"),
+      dim(" committed "),
+      fg(cOrange)(bold(report.commitSha.slice(0, 8))),
+      dim(` fix(stitch): ${report.fixed.join(", ")}`),
+    ];
+    if (report.pushed) {
+      commitChunks.push(fg(cGreen)(" pushed"));
+    } else if (report.reason === "push_failed") {
+      commitChunks.push(fg(cRed)(" push failed"));
+    }
+    view.runCommit.content = new StyledText(commitChunks);
+    view.runCommit.visible = true;
+    return;
+  }
+  const skipMsg = commitSkipMessage(report.reason);
+  if (!skipMsg) {
+    view.runCommit.visible = false;
+    return;
+  }
+  view.runCommit.content = new StyledText([dim("* "), dim(skipMsg)]);
   view.runCommit.visible = true;
+}
+
+function commitSkipMessage(reason?: CommitPushReason): string | null {
+  switch (reason) {
+    case "dirty_pre_run":
+      return "skipped commit: uncommitted changes present before run";
+    case "run_failed":
+      return "skipped commit: run failed";
+    case "no_fixed_jobs":
+      return "no commit: no fixes applied";
+    case "nothing_staged":
+      return "skipped commit: nothing staged";
+    case "commit_failed":
+      return "commit failed";
+    default:
+      return null;
+  }
 }
 
 function buildStatusText(
@@ -740,6 +793,11 @@ export class StitchUI {
     this.refresh();
   }
 
+  setNotice(msg: string) {
+    this.tuiState.notice = msg;
+    this.refresh();
+  }
+
   initJobs(jobs: CIJob[]) {
     this.tuiState.initJobs(jobs);
     if (this.view) {
@@ -775,6 +833,10 @@ export class StitchUI {
     this.keypressHandler = (event) => {
       const name = event.name;
       if (name === "c" && event.ctrl) {
+        if (this.tuiState.state.phase !== "done" && this.tuiState.onAbort) {
+          this.tuiState.onAbort();
+          return;
+        }
         quit();
         return;
       }
@@ -816,15 +878,40 @@ export class StitchUI {
     }
   }
 
-  markDone(report: RunReport, commitSha: string | null, pushed: boolean) {
-    this.tuiState.markDone(report, commitSha, pushed);
+  markDone(
+    report: RunReport,
+    commitSha: string | null,
+    pushed: boolean,
+    reason?: CommitPushReason,
+  ) {
+    this.tuiState.markDone(report, commitSha, pushed, reason);
     this.refresh();
   }
 
-  waitForRerun(): Promise<"rerun" | "quit"> {
+  setOnAbort(fn: (() => void) | null): void {
+    this.tuiState.onAbort = fn;
+  }
+
+  waitForRerun(signal?: AbortSignal): Promise<"rerun" | "quit" | "aborted"> {
     return new Promise((resolve) => {
-      this.tuiState.onRerun = () => resolve("rerun");
-      this.tuiState.onQuit = () => resolve("quit");
+      if (signal?.aborted) {
+        resolve("aborted");
+        return;
+      }
+      const onAbort = () => {
+        this.tuiState.onRerun = null;
+        this.tuiState.onQuit = null;
+        resolve("aborted");
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this.tuiState.onRerun = () => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve("rerun");
+      };
+      this.tuiState.onQuit = () => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve("quit");
+      };
     });
   }
 
