@@ -12,15 +12,11 @@ interface EnsureResult {
 
 function isCovered(lines: string[], entry: string): boolean {
   const bare = entry.replace(/\/$/, "");
+  const accepted = new Set([entry, bare, `${bare}/`, `${bare}/*`, `${bare}/**`]);
   for (const raw of lines) {
     const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    if (line.startsWith("!")) continue;
-    if (line === entry) return true;
-    if (line === bare) return true;
-    if (line === `${bare}/`) return true;
-    if (line === `${bare}/*`) return true;
-    if (line === `${bare}/**`) return true;
+    if (!line || line.startsWith("#") || line.startsWith("!")) continue;
+    if (accepted.has(line)) return true;
   }
   return false;
 }

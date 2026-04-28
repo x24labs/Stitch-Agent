@@ -11,9 +11,9 @@ import {
   fg,
   t,
 } from "@opentui/core";
+import { VERSION } from "../../version.js";
 import type { CIJob, CommitPushReason, JobResult, RunReport } from "../models.js";
 import type { RunnerCallback } from "../runner.js";
-import { VERSION } from "../../version.js";
 import { createRenderer } from "./renderer.js";
 
 // ── Colors ─────────────────────────────────────────────────────────────────
