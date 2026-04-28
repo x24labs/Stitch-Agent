@@ -1,6 +1,16 @@
 # Changelog
 
-## v2.0.1, unreleased
+## v2.0.2, unreleased
+
+### Added
+
+- On startup, `stitch run` and `stitch run --watch` automatically add `.stitch/` and `.stitch.lock` to the repo's `.gitignore` if missing. Prevents Stitch's history files (`history.jsonl`, `history-head.json`, `jobs.json`) and the watch lockfile from polluting `git status` and being accidentally committed during watch-mode auto-commit. Idempotent: existing entries are preserved, no duplicates are written. Creates `.gitignore` if absent.
+
+### Changed
+
+- Version string is now sourced from `package.json` at build time (via `tsup` `define` injection into `src/version.ts`). The `--version` flag and the TUI welcome banner read from a single constant, so future releases only need a `package.json` bump.
+
+## v2.0.1, 2026-04-28
 
 ### Added
 

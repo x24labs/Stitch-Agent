@@ -135,6 +135,7 @@ What Stitch actually does, end to end:
 - **JSON output for pipelines.** `--output json` gives you a machine-readable report if you want to wrap Stitch inside a larger tool.
 - **Prefix-match job filtering.** `--jobs test` picks up `test`, `test:unit`, `test-e2e`, `test_fast` with separator awareness, so you do not need to list every variant.
 - **Optional per-repo config.** `.stitch.yml` sets defaults (agent, max attempts, push policy, include/exclude job lists). CLI flags still win. When the file is absent, behavior is unchanged.
+- **Auto-gitignore on startup.** Stitch ensures `.stitch/` and `.stitch.lock` are listed in your repo's `.gitignore` so its history files and watch lockfile never get committed by accident, especially in watch mode where auto-commit is on.
 
 ## Why Stitch
 
@@ -192,6 +193,8 @@ stitch run claude --watch --debounce 5     # custom quiet window
 Between runs, press `Enter` (or `r`) to re-run immediately without waiting for a file change. During a run, `Ctrl+C` aborts the current run and returns to watch idle; press `q` to exit fully.
 
 If a previous Stitch run crashed or was killed, Stitch reclaims the watch lock automatically on the next start. No manual cleanup needed.
+
+On startup, Stitch makes sure your repo's `.gitignore` excludes `.stitch/` (history files) and `.stitch.lock` (watch lockfile). Without this, the auto-commit step in watch mode can pick up Stitch's own internal files and pollute your history. Stitch only appends what is missing under a `# Stitch (auto-added)` marker; existing entries are left alone, and the file is created if absent.
 
 After each successful iteration, Stitch commits the agent's edits with `fix(stitch): <jobs>` and pushes, honoring `push: true/false` in `.stitch.yml` and the `--no-push` flag. If the working tree has uncommitted changes when Stitch starts, it prints a one-line warning on stderr and skips auto-commit for that session to avoid stepping on work in progress.
 
