@@ -13,6 +13,7 @@ import {
 } from "@opentui/core";
 import type { CIJob, CommitPushReason, JobResult, RunReport } from "../models.js";
 import type { RunnerCallback } from "../runner.js";
+import { VERSION } from "../../version.js";
 import { createRenderer } from "./renderer.js";
 
 // ── Colors ─────────────────────────────────────────────────────────────────
@@ -380,7 +381,7 @@ async function buildViewTree(agent: string, repo: string): Promise<ViewTree> {
 
   const welcomeStats = new TextRenderable(renderer, {
     id: "welcome-stats",
-    content: t`${fg(cBlue)(bold("Agent"))} ${dim(agent)}   ${fg(cCyan)("\u00b7")}   ${fg(cCyan)(bold("Repo"))} ${dim(repo)}   ${fg(cCyan)("\u00b7")}   ${fg(cPurple)(bold("v2.0.1"))}`,
+    content: t`${fg(cBlue)(bold("Agent"))} ${dim(agent)}   ${fg(cCyan)("\u00b7")}   ${fg(cCyan)(bold("Repo"))} ${dim(repo)}   ${fg(cCyan)("\u00b7")}   ${fg(cPurple)(bold(`v${VERSION}`))}`,
     alignSelf: "center",
     marginTop: 1,
   });

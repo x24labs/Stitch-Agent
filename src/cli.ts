@@ -3,13 +3,14 @@ import { runDoctorCommand } from "./commands/doctor.js";
 import { runGenerateCommand } from "./commands/generate.js";
 import { runHistoryCommand } from "./commands/history.js";
 import { runRunCommand } from "./commands/run.js";
+import { VERSION } from "./version.js";
 
 const program = new Command();
 
 program
   .name("stitch")
   .description("Run your CI jobs locally. Fix failures with AI.")
-  .version("2.0.1");
+  .version(VERSION);
 
 program
   .command("run")
