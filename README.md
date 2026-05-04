@@ -5,7 +5,7 @@
 <h1 align="center">Stitch Agent</h1>
 
 <p align="center">
-  <strong>Your CI,<br/>always running.<br/>Self-healing.</strong>
+  <strong>Your CI, always running. Self-healing.</strong>
 </p>
 
 <p align="center">
@@ -17,26 +17,6 @@
 ---
 
 Stitch parses your CI configuration (GitLab CI, GitHub Actions, Bitbucket Pipelines), runs the jobs on your machine, and when something fails, hands the error to an AI agent that fixes it. Feedback in seconds, not minutes. No API keys. Zero config by default, with an optional `.stitch.yml` for per-repo defaults.
-
-```
-                                                         +*+++++++++-         .+%
-                                                      .=+---=====+++++:       ::
-                         .                          .=+---------.  :-:=++++-:+==--:.
-                      :+*++=                       =+-------*%%%#++**#=====-+*+:....
-                      .=+++++=                   +*+=-----#%%%%%%%%%%%%     =-
-                         =++++++:              +***++++++*%%%%%%%%%%%%     -*:
-                           =++++++-         .=****++++++++%%%%%%%%%%#.    -#-
-                             .=+++++:.   .:+****++++++++++%%%%%%%%%%#.   .+-
-                               .=++++++:-=+***+++++++++++*%%%%%%%%%%#.  .==
-                                 .-+=---+**++++++++++++*%%%%%%%%%%%%%.  :*
-                                     :+*++++++++++++*#%%%%%%%%%%%%%%:  .#
-                                    ++++++++++*###%%%%%%%%%%%%%%%%=    #
-                                  =*+==+#######%%%%%%%%%%%%%%%%%*:    #
-                                ::      .*#%%%%%%%%%%%%%%%%%%%#-     +
-                                           :===%%%%%%%%%*====-      -
-                                             ..   :..
-                                                .    ..
-```
 
 ## Quick start
 
