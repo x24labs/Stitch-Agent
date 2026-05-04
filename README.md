@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="assets/stitch-logo.png" alt="Stitch" width="160" />
+  <img src="https://stitch-agent.dev/a-classic-horizontal-1280-400.jpg" alt="Stitch" width="1280" />
 </p>
 
-<h1 align="center">Stitch</h1>
+<h1 align="center">Stitch Agent</h1>
 
 <p align="center">
-  <strong>Run your CI locally. Fix failures with AI.</strong>
+  <strong>Your CI, always running. Self-healing.</strong>
 </p>
 
 <p align="center">
@@ -17,26 +17,6 @@
 ---
 
 Stitch parses your CI configuration (GitLab CI, GitHub Actions, Bitbucket Pipelines), runs the jobs on your machine, and when something fails, hands the error to an AI agent that fixes it. Feedback in seconds, not minutes. No API keys. Zero config by default, with an optional `.stitch.yml` for per-repo defaults.
-
-```
-                                                         +*+++++++++-         .+%
-                                                      .=+---=====+++++:       ::
-                         .                          .=+---------.  :-:=++++-:+==--:.
-                      :+*++=                       =+-------*%%%#++**#=====-+*+:....
-                      .=+++++=                   +*+=-----#%%%%%%%%%%%%     =-
-                         =++++++:              +***++++++*%%%%%%%%%%%%     -*:
-                           =++++++-         .=****++++++++%%%%%%%%%%#.    -#-
-                             .=+++++:.   .:+****++++++++++%%%%%%%%%%#.   .+-
-                               .=++++++:-=+***+++++++++++*%%%%%%%%%%#.  .==
-                                 .-+=---+**++++++++++++*%%%%%%%%%%%%%.  :*
-                                     :+*++++++++++++*#%%%%%%%%%%%%%%:  .#
-                                    ++++++++++*###%%%%%%%%%%%%%%%%=    #
-                                  =*+==+#######%%%%%%%%%%%%%%%%%*:    #
-                                ::      .*#%%%%%%%%%%%%%%%%%%%#-     +
-                                           :===%%%%%%%%%*====-      -
-                                             ..   :..
-                                                .    ..
-```
 
 ## Quick start
 
